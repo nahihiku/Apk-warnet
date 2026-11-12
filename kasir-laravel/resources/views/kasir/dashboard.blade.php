@@ -1684,11 +1684,11 @@
                         <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 shadow-sm space-y-3">
                             <div class="flex items-center justify-between">
                                 <span class="text-xs font-semibold uppercase text-gray-400">Master Game Disk</span>
-                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-green-500/10 text-green-500">Enterprise NVMe</span>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-green-500/10 text-green-500">Server Storage</span>
                             </div>
-                            <div class="text-xl font-bold text-gray-900 dark:text-gray-100">4TB PCIe Gen4 RAID 0</div>
+                            <div class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ $disklessConfigs['master_drive'] ?? 'Drive D: Games' }}</div>
                             <p class="text-xs text-gray-500 dark:text-gray-400">
-                                Seluruh file game tersimpan di server dan otomatis terbaca sebagai Local Disk (D:) di 15 PC Client melalui jaringan 2.5GbE.
+                                Seluruh file game tersimpan terpusat di server dan dibagikan ke PC Client melalui jaringan lokal.
                             </p>
                             <div class="text-[11px] font-medium text-blue-500 mono">{{ $disklessConfigs['total_games'] ?? ($serverGames->where('is_visible', true)->count() . ' Game Terdeteksi') }}</div>
                         </div>
@@ -1697,13 +1697,21 @@
                         <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 shadow-sm space-y-3">
                             <div class="flex items-center justify-between">
                                 <span class="text-xs font-semibold uppercase text-gray-400">Infrastruktur LAN</span>
-                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/10 text-blue-500">2.5 Gbps</span>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/10 text-blue-500">Active LAN</span>
                             </div>
-                            <div class="text-xl font-bold text-gray-900 dark:text-gray-100">2.5GbE Switch 16-Port</div>
-                            <p class="text-xs text-gray-500 dark:text-gray-400">
-                                Bandwidth dedicated full-duplex tanpa bottleneck saat 15 PC memuat game berat secara bersamaan.
-                            </p>
-                            <div class="text-[11px] font-medium text-emerald-500 mono">Throughput Max: 312.5 MB/s per Node</div>
+                            <div class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ $disklessConfigs['network_speed'] ?? '2.5GbE Full-Duplex Switch' }}</div>
+                            <form action="{{ route('kasir.diskless.config') }}" method="POST" class="space-y-1.5 pt-1">
+                                @csrf
+                                <div class="flex gap-1.5">
+                                    <input type="text" name="master_drive" value="{{ $disklessConfigs['master_drive'] ?? '' }}" placeholder="Label Drive Server"
+                                           class="w-1/2 px-2 py-1 text-[10px] rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-700 dark:text-gray-300">
+                                    <input type="text" name="network_speed" value="{{ $disklessConfigs['network_speed'] ?? '' }}" placeholder="Kecepatan Switch"
+                                           class="w-1/2 px-2 py-1 text-[10px] rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-700 dark:text-gray-300">
+                                </div>
+                                <button type="submit" class="w-full py-1 rounded bg-gray-200 dark:bg-gray-800 hover:bg-blue-600 hover:text-white text-[10px] font-semibold transition">
+                                    Simpan Info Hardware Server
+                                </button>
+                            </form>
                         </div>
 
                         <!-- Card 3: Mode Super User / Update Patch -->
@@ -1883,6 +1891,35 @@
                             </div>
                         </div>
 
+                        <!-- Form Tambah Akun Game Vault Baru -->
+                        <form action="{{ route('kasir.vault.store') }}" method="POST" class="p-4 rounded-lg bg-gray-50 dark:bg-gray-950/60 border border-gray-200 dark:border-gray-800 grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                            @csrf
+                            <div class="md:col-span-4">
+                                <label class="block text-[10px] font-semibold uppercase text-gray-400 mb-1">Judul Game (Harus Sesuai Katalog)</label>
+                                <input type="text" name="game_title" required placeholder="Misal: Forza Horizon 5"
+                                       class="w-full px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200">
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-[10px] font-semibold uppercase text-gray-400 mb-1">Platform</label>
+                                <select name="platform" class="w-full px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200">
+                                    <option value="steam">Steam</option>
+                                    <option value="gamepass">PC Game Pass</option>
+                                    <option value="ea_play">EA Play</option>
+                                    <option value="epic">Epic Games</option>
+                                </select>
+                            </div>
+                            <div class="md:col-span-4">
+                                <label class="block text-[10px] font-semibold uppercase text-gray-400 mb-1">Username Akun Warnet</label>
+                                <input type="text" name="account_username" required placeholder="warnet_steam_01"
+                                       class="w-full px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 mono">
+                            </div>
+                            <div class="md:col-span-2">
+                                <button type="submit" class="w-full py-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold">
+                                    + Tambah Lisensi
+                                </button>
+                            </div>
+                        </form>
+
                         <!-- Grid Daftar Akun Game Vault -->
                         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                             @foreach($vaultAccounts as $acc)
@@ -1895,9 +1932,17 @@
                                             {{ $acc->status === 'borrowed' ? 'SEDANG DIPINJAM' : 'TERSEDIA (IDLE)' }}
                                         </span>
                                     </div>
-                                    <div>
-                                        <div class="font-bold text-sm text-gray-900 dark:text-gray-100">{{ $acc->game_title }}</div>
-                                        <div class="text-xs text-gray-500 mono mt-0.5">User ID: {{ $acc->account_username }}</div>
+                                    <div class="flex items-start justify-between gap-2">
+                                        <div>
+                                            <div class="font-bold text-sm text-gray-900 dark:text-gray-100">{{ $acc->game_title }}</div>
+                                            <div class="text-xs text-gray-500 mono mt-0.5">User ID: {{ $acc->account_username }}</div>
+                                        </div>
+                                        <form action="{{ route('kasir.vault.delete', $acc) }}" method="POST" onsubmit="return confirm('Hapus lisensi akun {{ $acc->account_username }}?')">
+                                            @csrf
+                                            <button type="submit" class="px-2 py-0.5 rounded text-[10px] bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition">
+                                                Hapus
+                                            </button>
+                                        </form>
                                     </div>
 
                                     @if($acc->status === 'borrowed')

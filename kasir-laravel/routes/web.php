@@ -41,11 +41,14 @@ Route::post('/kasir/orders/{order}/confirm-payment', [KasirController::class, 'c
 
 // Diskless Server & Game Vault Management
 Route::post('/kasir/diskless/toggle-superuser', [KasirController::class, 'toggleSuperUser'])->name('kasir.diskless.superuser');
+Route::post('/kasir/diskless/config', [KasirController::class, 'updateDisklessConfig'])->name('kasir.diskless.config');
 Route::post('/kasir/diskless/scan-games', [KasirController::class, 'scanServerGames'])->name('kasir.diskless.scan');
 Route::post('/kasir/server-games/store', [KasirController::class, 'storeCustomServerGame'])->name('kasir.games.store');
 Route::post('/kasir/server-games/{game}/update', [KasirController::class, 'updateServerGame'])->name('kasir.games.update');
 Route::post('/kasir/server-games/{game}/delete', [KasirController::class, 'destroyServerGame'])->name('kasir.games.delete');
+Route::post('/kasir/vault/store', [KasirController::class, 'storeVaultAccount'])->name('kasir.vault.store');
 Route::post('/kasir/vault/{account}/release', [KasirController::class, 'releaseVaultAccount'])->name('kasir.vault.release');
+Route::post('/kasir/vault/{account}/delete', [KasirController::class, 'destroyVaultAccount'])->name('kasir.vault.delete');
 
 // =========================================================
 // REST API ROUTES: UNTUK CLIENT C++ NATIVE (NO CSRF)

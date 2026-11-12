@@ -273,29 +273,78 @@ void open_game_folder() {
 // -------------------------------------------------------------
 void cleanup_user_session_cache() {
     std::string host;
+    std::vector<std::string> server_exes;
     {
         std::lock_guard<std::mutex> lock(g_state.mtx);
         host = g_state.server_host;
+        for (const auto& gm : g_state.server_games) {
+            if (gm.command.find("://") == std::string::npos) {
+                std::string lc = gm.command;
+                for (auto& c : lc) c = (char)tolower(c);
+                size_t p = lc.find_last_of("\\/");
+                if (p != std::string::npos) lc = lc.substr(p + 1);
+                if (!lc.empty()) server_exes.push_back(lc);
+            }
+        }
     }
     bool is_localhost_dev = (host == "127.0.0.1" || host == "localhost");
+    DWORD selfPid = GetCurrentProcessId();
 
-    // 1. Matikan proses game aktif
-    const char* game_procs[] = {
-        "Valorant.exe", "VALORANT-Win64-Shipping.exe", "RiotClientServices.exe",
-        "PointBlank.exe", "cs2.exe", "dota2.exe", "RobloxPlayerBeta.exe",
-        "DeltaForceClient.exe", "df_garena_launcher.exe", "ForzaHorizon5.exe",
-        "GenshinImpact.exe", "WutheringWaves.exe", "ZenlessZoneZero.exe",
-        "GTA5.exe", "aces.exe", "Subnautica.exe", "Raft.exe"
-    };
-    for (const char* p : game_procs) {
-        std::string cmd = "taskkill /F /IM " + std::string(p) + " >nul 2>&1";
-        system(cmd.c_str());
+    // 1. Tutup proses game aktif secara dinamis (berdasarkan path direktori game / daftar game server)
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32 pe;
+        pe.dwSize = sizeof(PROCESSENTRY32);
+        if (Process32First(hSnap, &pe)) {
+            do {
+                if (pe.th32ProcessID == selfPid || pe.th32ProcessID <= 4) continue;
+                char chExe[MAX_PATH] = {0};
+                WideCharToMultiByte(CP_ACP, 0, pe.szExeFile, -1, chExe, sizeof(chExe), NULL, NULL);
+                std::string exeName = chExe;
+                std::string lowerExe = exeName;
+                for (auto& c : lowerExe) c = (char)tolower(c);
+
+                // Jangan pernah mematikan steam.exe saat localhost dev kecuali bukan localhost
+                if (is_localhost_dev && (lowerExe == "steam.exe" || lowerExe == "discord.exe" || lowerExe == "obs64.exe")) {
+                    continue;
+                }
+
+                bool shouldKill = false;
+                for (const auto& sx : server_exes) {
+                    if (lowerExe == sx) { shouldKill = true; break; }
+                }
+
+                HANDLE hQuery = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+                if (hQuery) {
+                    if (!shouldKill) {
+                        char imgPath[MAX_PATH * 2] = {0};
+                        DWORD sz = sizeof(imgPath);
+                        if (QueryFullProcessImageNameA(hQuery, 0, imgPath, &sz)) {
+                            std::string lowerPath(imgPath);
+                            for (auto& c : lowerPath) c = (char)tolower(c);
+                            if (lowerPath.find("\\steamapps\\common\\") != std::string::npos ||
+                                lowerPath.find("\\games\\") != std::string::npos ||
+                                lowerPath.find("\\game\\") != std::string::npos ||
+                                lowerPath.find("\\riot games\\") != std::string::npos ||
+                                lowerPath.find("\\epic games\\") != std::string::npos) {
+                                shouldKill = true;
+                            }
+                        }
+                    }
+                    if (shouldKill) {
+                        TerminateProcess(hQuery, 0);
+                    }
+                    CloseHandle(hQuery);
+                }
+            } while (Process32Next(hSnap, &pe));
+        }
+        CloseHandle(hSnap);
     }
 
-    // Jika berjalan di PC Client warnet terpisah (bukan testing localhost di laptop admin), wipe browser & Discord
+    // 2. Pada mode PC Client terpisah (non-localhost), wipe launcher, browser & credential cache sesi
     if (!is_localhost_dev) {
         const char* session_procs[] = {
-            "steam.exe", "EpicGamesLauncher.exe", "Discord.exe",
+            "steam.exe", "EpicGamesLauncher.exe", "RiotClientServices.exe", "Discord.exe",
             "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe"
         };
         for (const char* p : session_procs) {

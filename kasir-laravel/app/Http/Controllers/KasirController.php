@@ -761,4 +761,43 @@ class KasirController extends Controller
 
         return back()->with('success', "Game '{$name}' berhasil dihapus dari katalog.");
     }
+
+    public function updateDisklessConfig(Request $request)
+    {
+        if ($request->filled('master_drive')) {
+            DisklessServerConfig::updateOrCreate(['key' => 'master_drive'], ['value' => trim($request->input('master_drive'))]);
+        }
+        if ($request->filled('network_speed')) {
+            DisklessServerConfig::updateOrCreate(['key' => 'network_speed'], ['value' => trim($request->input('network_speed'))]);
+        }
+
+        return back()->with('success', 'Konfigurasi hardware Server Diskless berhasil diperbarui.');
+    }
+
+    public function storeVaultAccount(Request $request)
+    {
+        $request->validate([
+            'game_title' => 'required|string|max:120',
+            'platform' => 'required|in:steam,gamepass,ea_play,epic',
+            'account_username' => 'required|string|max:120',
+        ]);
+
+        GameVaultAccount::create([
+            'game_title' => $request->input('game_title'),
+            'platform' => $request->input('platform'),
+            'account_username' => $request->input('account_username'),
+            'account_token' => $request->input('account_token') ?: 'VAULT_' . strtoupper(uniqid()),
+            'status' => 'available',
+        ]);
+
+        return back()->with('success', "Lisensi Akun Game Vault '{$request->input('game_title')}' berhasil ditambahkan.");
+    }
+
+    public function destroyVaultAccount(GameVaultAccount $account)
+    {
+        $title = $account->game_title;
+        $account->delete();
+
+        return back()->with('success', "Lisensi Akun Game Vault '{$title}' berhasil dihapus.");
+    }
 }
