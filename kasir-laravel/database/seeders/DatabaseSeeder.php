@@ -7,6 +7,8 @@ use App\Models\Member;
 use App\Models\PcClient;
 use App\Models\BillingPackage;
 use App\Models\FoodMenu;
+use App\Models\GameVaultAccount;
+use App\Models\DisklessServerConfig;
 use Illuminate\Support\Facades\Hash;
 
 class DatabaseSeeder extends Seeder
@@ -19,22 +21,22 @@ class DatabaseSeeder extends Seeder
                 'username' => 'sultan01',
                 'name' => 'Sultan Gaming',
                 'password' => Hash::make('password'),
-                'balance' => 150000,
+                'balance' => 250000,
                 'saved_seconds' => 7200, // 2 Jam
             ],
             [
                 'username' => 'gamer02',
                 'name' => 'Rizky Pro Player',
                 'password' => Hash::make('password'),
-                'balance' => 55000,
-                'saved_seconds' => 2700, // 45 Menit
+                'balance' => 95000,
+                'saved_seconds' => 3600, // 1 Jam
             ],
             [
                 'username' => 'budi99',
                 'name' => 'Budi Santoso',
                 'password' => Hash::make('password'),
-                'balance' => 25000,
-                'saved_seconds' => 900, // 15 Menit
+                'balance' => 45000,
+                'saved_seconds' => 1800, // 30 Menit
             ],
         ];
 
@@ -42,24 +44,27 @@ class DatabaseSeeder extends Seeder
             Member::updateOrCreate(['username' => $m['username']], $m);
         }
 
-        // 2. Seed PC Clients (PC-01 to PC-10) with 3 Tiers: reguler, vip, vip++
-        for ($i = 1; $i <= 10; $i++) {
+        // 2. Seed 15 PC Clients (Diskless Network 2.5GbE)
+        // - PC-01 to PC-07 (7 PC): Kelas Reguler
+        // - PC-08 to PC-12 (5 PC): Kelas VIP
+        // - PC-13 to PC-15 (3 PC): Kelas VIP++
+        for ($i = 1; $i <= 15; $i++) {
             $code = sprintf('PC-%02d', $i);
-            if ($i <= 6) {
+            if ($i <= 7) {
                 $type = 'reguler';
-                $rate = 5000;
+                $rate = 10000;
                 $name = "Terminal Reguler #$i";
-                $specs = "Core i5-12400F / RTX 3060 12GB / RAM 16GB / Monitor 165Hz";
-            } elseif ($i <= 9) {
+                $specs = "AMD RX 6600 / RTX 3050 / RAM 16GB / Monitor 180Hz (F2P Esports)";
+            } elseif ($i <= 12) {
                 $type = 'vip';
-                $rate = 8000;
+                $rate = 25000;
                 $name = "Terminal VIP #$i";
-                $specs = "Core i7-13700F / RTX 4070 12GB / RAM 32GB / Monitor 240Hz Curved";
+                $specs = "Ryzen 5 7500F / RTX 4060 8GB / RAM 32GB / Monitor 180Hz IPS (PC Game Pass + Open World)";
             } else {
                 $type = 'vip++';
-                $rate = 12000;
+                $rate = 35000;
                 $name = "Terminal VIP++ Sultan #$i";
-                $specs = "Core i9-14900K / RTX 4090 24GB / RAM 64GB / Monitor 360Hz ROG + Kursi Gaming Titan";
+                $specs = "Core i7-14700KF / RTX 5060 GDDR7 / RAM 32GB / Monitor 240Hz 2K QHD (AAA Ray Tracing + OBS)";
             }
 
             PcClient::updateOrCreate(
@@ -76,25 +81,25 @@ class DatabaseSeeder extends Seeder
             );
         }
 
-        // 3. Seed Billing Packages (Tiered: reguler, vip, vip++, all)
+        // 3. Seed Billing Packages (Sesuai Tarif: Reguler Rp10rb, VIP Rp25rb, VIP++ Rp35rb)
         $packages = [
             // Reguler Tier
-            ['name' => 'Paket Reguler 1 Jam', 'duration_minutes' => 60, 'pc_type' => 'reguler', 'price' => 5000, 'description' => '1 Jam akses PC Reguler (i5 + RTX 3060)'],
-            ['name' => 'Paket Reguler 3 Jam', 'duration_minutes' => 180, 'pc_type' => 'reguler', 'price' => 13000, 'description' => 'Hemat 3 jam bermain di PC Reguler'],
-            ['name' => 'Paket Reguler 5 Jam', 'duration_minutes' => 300, 'pc_type' => 'reguler', 'price' => 20000, 'description' => 'Paket santai 5 jam PC Reguler'],
+            ['name' => 'Paket Reguler 1 Jam', 'duration_minutes' => 60, 'pc_type' => 'reguler', 'price' => 10000, 'description' => '1 Jam akses PC Reguler (F2P Esports: Valorant, CS2, Dota 2, Roblox)'],
+            ['name' => 'Paket Reguler 3 Jam', 'duration_minutes' => 180, 'pc_type' => 'reguler', 'price' => 25000, 'description' => 'Hemat 3 jam bermain di PC Reguler (Hemat Rp 5.000)'],
+            ['name' => 'Paket Reguler 5 Jam', 'duration_minutes' => 300, 'pc_type' => 'reguler', 'price' => 40000, 'description' => 'Paket santai 5 jam PC Reguler (Hemat Rp 10.000)'],
 
-            // VIP Tier
-            ['name' => 'Paket VIP 1 Jam', 'duration_minutes' => 60, 'pc_type' => 'vip', 'price' => 8000, 'description' => '1 Jam akses PC VIP (i7 + RTX 4070 + 240Hz)'],
-            ['name' => 'Paket VIP 3 Jam', 'duration_minutes' => 180, 'pc_type' => 'vip', 'price' => 22000, 'description' => 'Paket favorit pro gamer 3 jam PC VIP'],
-            ['name' => 'Paket VIP 5 Jam', 'duration_minutes' => 300, 'pc_type' => 'vip', 'price' => 35000, 'description' => '5 Jam turnamen & mabar performa tinggi'],
+            // VIP Tier (Rp 25.000/jam)
+            ['name' => 'Paket VIP 1 Jam', 'duration_minutes' => 60, 'pc_type' => 'vip', 'price' => 25000, 'description' => '1 Jam akses PC VIP (Ryzen 5 + RTX 4060 + PC Game Pass & Open World)'],
+            ['name' => 'Paket VIP 3 Jam', 'duration_minutes' => 180, 'pc_type' => 'vip', 'price' => 65000, 'description' => '3 Jam turnamen & mabar performa tinggi PC VIP (Hemat Rp 10.000)'],
+            ['name' => 'Paket VIP 5 Jam', 'duration_minutes' => 300, 'pc_type' => 'vip', 'price' => 100000, 'description' => '5 Jam VIP gaming non-stop (Hemat Rp 25.000)'],
 
-            // VIP++ Tier
-            ['name' => 'Paket VIP++ 1 Jam', 'duration_minutes' => 60, 'pc_type' => 'vip++', 'price' => 12000, 'description' => '1 Jam Sultan PC VIP++ (i9 + RTX 4090 + 360Hz)'],
-            ['name' => 'Paket VIP++ 3 Jam', 'duration_minutes' => 180, 'pc_type' => 'vip++', 'price' => 32000, 'description' => '3 Jam gaming ultra-high end setup sultan'],
-            ['name' => 'Paket VIP++ 5 Jam', 'duration_minutes' => 300, 'pc_type' => 'vip++', 'price' => 50000, 'description' => '5 Jam VIP++ non-stop setup terkencang'],
+            // VIP++ Tier (Rp 35.000/jam)
+            ['name' => 'Paket VIP++ 1 Jam', 'duration_minutes' => 60, 'pc_type' => 'vip++', 'price' => 35000, 'description' => '1 Jam Sultan VIP++ (RTX 5060 GDDR7 + 240Hz 2K + Pinjam Akun Game AAA)'],
+            ['name' => 'Paket VIP++ 3 Jam', 'duration_minutes' => 180, 'pc_type' => 'vip++', 'price' => 90000, 'description' => '3 Jam AAA Ray Tracing Ultra + Live Streaming OBS (Hemat Rp 15.000)'],
+            ['name' => 'Paket VIP++ 5 Jam', 'duration_minutes' => 300, 'pc_type' => 'vip++', 'price' => 140000, 'description' => '5 Jam VIP++ non-stop setup terkencang (Hemat Rp 35.000)'],
 
             // All Tiers / Universal
-            ['name' => 'Paket Kalong Malam (All PC)', 'duration_minutes' => 420, 'pc_type' => 'all', 'price' => 25000, 'description' => '7 Jam paket begadang berlaku di semua terminal'],
+            ['name' => 'Paket Kalong Malam (All PC)', 'duration_minutes' => 420, 'pc_type' => 'all', 'price' => 50000, 'description' => '7 Jam paket begadang tengah malam berlaku di seluruh terminal'],
         ];
 
         foreach ($packages as $pkg) {
@@ -119,6 +124,79 @@ class DatabaseSeeder extends Seeder
 
         foreach ($menus as $menu) {
             FoodMenu::updateOrCreate(['name' => $menu['name']], $menu);
+        }
+
+        // 5. Seed Game Vault (Akun Sharing Steam AAA & Game Pass untuk VIP & VIP++)
+        $vaultAccounts = [
+            [
+                'game_title' => 'Black Myth: Wukong',
+                'platform' => 'steam',
+                'account_username' => 'ukikura_wukong_01',
+                'account_token' => 'VAULT_TOKEN_WUKONG_99182',
+                'status' => 'available',
+            ],
+            [
+                'game_title' => 'Cyberpunk 2077: Phantom Liberty',
+                'platform' => 'steam',
+                'account_username' => 'ukikura_cyber_01',
+                'account_token' => 'VAULT_TOKEN_CYBER_2077X',
+                'status' => 'available',
+            ],
+            [
+                'game_title' => 'Tekken 8 Ultimate',
+                'platform' => 'steam',
+                'account_username' => 'ukikura_tekken_01',
+                'account_token' => 'VAULT_TOKEN_TEKKEN_882',
+                'status' => 'available',
+            ],
+            [
+                'game_title' => 'Forza Horizon 5 Premium',
+                'platform' => 'steam',
+                'account_username' => 'ukikura_forza_01',
+                'account_token' => 'VAULT_TOKEN_FORZA_FH5',
+                'status' => 'available',
+            ],
+            [
+                'game_title' => 'Red Dead Redemption 2',
+                'platform' => 'steam',
+                'account_username' => 'ukikura_rdr2_01',
+                'account_token' => 'VAULT_TOKEN_RDR2_WILD',
+                'status' => 'available',
+            ],
+            [
+                'game_title' => 'Monster Hunter Wilds',
+                'platform' => 'steam',
+                'account_username' => 'ukikura_mhw_01',
+                'account_token' => 'VAULT_TOKEN_MHW_ALPHA',
+                'status' => 'available',
+            ],
+            [
+                'game_title' => 'Microsoft PC Game Pass Ultimate',
+                'platform' => 'gamepass',
+                'account_username' => 'ukikura_gamepass_vip',
+                'account_token' => 'VAULT_TOKEN_XBOX_PASS_VIP',
+                'status' => 'available',
+            ],
+        ];
+
+        foreach ($vaultAccounts as $acc) {
+            GameVaultAccount::updateOrCreate(
+                ['game_title' => $acc['game_title'], 'account_username' => $acc['account_username']],
+                $acc
+            );
+        }
+
+        // 6. Seed Server Diskless Configuration
+        $disklessConfigs = [
+            ['key' => 'master_drive', 'value' => '4TB NVMe PCIe Gen4 Enterprise (Drive D: Games)'],
+            ['key' => 'network_speed', 'value' => '2.5GbE Full-Duplex Switch 16-Port'],
+            ['key' => 'superuser_mode', 'value' => 'STANDBY'], // STANDBY, UPDATING, ACTIVE
+            ['key' => 'total_games', 'value' => '48 Game Terpasang'],
+            ['key' => 'last_update_log', 'value' => 'Patch Valorant v9.08 & Genshin Impact v5.2 sukses tersinkron ke 15 PC.'],
+        ];
+
+        foreach ($disklessConfigs as $cfg) {
+            DisklessServerConfig::updateOrCreate(['key' => $cfg['key']], $cfg);
         }
     }
 }

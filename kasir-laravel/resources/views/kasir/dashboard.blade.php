@@ -182,6 +182,20 @@
                                 {{ $members->count() }}
                             </span>
                         </button>
+
+                        <!-- 7. Diskless & Game Vault -->
+                        <button @click="setTab('Diskless & Vault')"
+                                :class="selected === 'Diskless & Vault'
+                                    ? 'bg-blue-50 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 shadow-sm border-l-2 border-blue-500'
+                                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-200'"
+                                class="relative flex h-11 w-full items-center rounded-md transition-all duration-200">
+                            <div class="grid h-full w-12 shrink-0 place-content-center">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>
+                                </svg>
+                            </div>
+                            <span x-show="open" class="text-sm font-medium truncate">Diskless & Vault</span>
+                        </button>
                     </div>
 
                     <!-- Secondary Account / System Links -->
@@ -246,6 +260,9 @@
                         </p>
                         <p class="text-gray-600 dark:text-gray-400 mt-1 text-sm" x-show="selected === 'Members'" x-cloak>
                             Top-up paket billing langsung ke member, isi saldo/waktu, edit data member, dan registrasi baru
+                        </p>
+                        <p class="text-gray-600 dark:text-gray-400 mt-1 text-sm" x-show="selected === 'Diskless & Vault'" x-cloak>
+                            Server Diskless 4TB NVMe, Update Terpusat (Mode Super User), dan Lisensi Akun Sharing Steam AAA & PC Game Pass
                         </p>
                     </div>
 
@@ -1654,6 +1671,132 @@
                             </div>
                         </div>
 
+                    </div>
+                </div>
+
+                <!-- ========================================================= -->
+                <!-- HALAMAN 7: DISKLESS SERVER & GAME VAULT (LISENSI SHARING) -->
+                <!-- ========================================================= -->
+                <div x-show="selected === 'Diskless & Vault'" x-cloak class="space-y-8">
+                    <!-- Kartu Status Diskless Server -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <!-- Card 1: Master Game Disk -->
+                        <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 shadow-sm space-y-3">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold uppercase text-gray-400">Master Game Disk</span>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-green-500/10 text-green-500">Enterprise NVMe</span>
+                            </div>
+                            <div class="text-xl font-bold text-gray-900 dark:text-gray-100">4TB PCIe Gen4 RAID 0</div>
+                            <p class="text-xs text-gray-500 dark:text-gray-400">
+                                Seluruh file game tersimpan di server dan otomatis terbaca sebagai Local Disk (D:) di 15 PC Client melalui jaringan 2.5GbE.
+                            </p>
+                            <div class="text-[11px] font-medium text-blue-500 mono">D:\Games - 48 Game Siap Main</div>
+                        </div>
+
+                        <!-- Card 2: Jaringan & Infrastruktur -->
+                        <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 shadow-sm space-y-3">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold uppercase text-gray-400">Infrastruktur LAN</span>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/10 text-blue-500">2.5 Gbps</span>
+                            </div>
+                            <div class="text-xl font-bold text-gray-900 dark:text-gray-100">2.5GbE Switch 16-Port</div>
+                            <p class="text-xs text-gray-500 dark:text-gray-400">
+                                Bandwidth dedicated full-duplex tanpa bottleneck saat 15 PC memuat game berat secara bersamaan.
+                            </p>
+                            <div class="text-[11px] font-medium text-emerald-500 mono">Throughput Max: 312.5 MB/s per Node</div>
+                        </div>
+
+                        <!-- Card 3: Mode Super User / Update Patch -->
+                        <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 shadow-sm space-y-3">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold uppercase text-gray-400">Status Update Patch</span>
+                                @if(($disklessConfigs['superuser_mode'] ?? '') === 'UPDATING_SUPERUSER')
+                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 animate-pulse">MODE SUPER USER AKTIF</span>
+                                @else
+                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500/10 text-cyan-500">STANDBY (LOCKED 15 PC)</span>
+                                @endif
+                            </div>
+                            <div class="text-xl font-bold text-gray-900 dark:text-gray-100">Sekali Update Untuk Semua</div>
+                            <p class="text-xs text-gray-500 dark:text-gray-400">
+                                @if(($disklessConfigs['superuser_mode'] ?? '') === 'UPDATING_SUPERUSER')
+                                    Drive D: terbuka write-access. Buka game/launcher di PC ini untuk download patch update.
+                                @else
+                                    Seluruh 15 PC membaca versi game terbaru secara read-only.
+                                @endif
+                            </p>
+                            <form action="{{ route('kasir.diskless.superuser') }}" method="POST">
+                                @csrf
+                                <button type="submit" class="w-full py-2 rounded-lg text-xs font-semibold {{ ($disklessConfigs['superuser_mode'] ?? '') === 'UPDATING_SUPERUSER' ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white' }}">
+                                    {{ ($disklessConfigs['superuser_mode'] ?? '') === 'UPDATING_SUPERUSER' ? 'Selesai Patch & Kunci Kembali (Simpan ke 15 PC)' : 'Buka Mode Super User (Mulai Update Patch Game)' }}
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Papan Log Update Diskless -->
+                    <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-4 shadow-sm flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <span class="h-2.5 w-2.5 rounded-full bg-blue-500"></span>
+                            <span class="text-xs text-gray-600 dark:text-gray-300">
+                                <strong>Log Diskless:</strong> {{ $disklessConfigs['last_update_log'] ?? 'Semua 15 PC terhubung ke Master Game Disk D:' }}
+                            </span>
+                        </div>
+                        <span class="text-[11px] text-gray-400 mono">Pembaruan patch disinkronkan otomatis</span>
+                    </div>
+
+                    <!-- Bagian Game Vault: Lisensi Akun Sharing Steam AAA & Game Pass -->
+                    <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 shadow-sm space-y-6">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div>
+                                <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                                    <span>Game Vault: Lisensi Akun Sharing Warnet</span>
+                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 uppercase">Khusus VIP (Rp25k) & VIP++ (Rp35k)</span>
+                                </h3>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    Pelanggan kelas VIP & VIP++ dapat meminjam akun game AAA atau PC Game Pass secara otomatis melalui tombol di aplikasi billing client C++ tanpa melihat password.
+                                </p>
+                            </div>
+                            <div class="text-xs text-gray-500 dark:text-gray-400">
+                                Total: <strong class="text-gray-900 dark:text-gray-100">{{ $vaultAccounts->count() }} Lisensi Akun</strong>
+                            </div>
+                        </div>
+
+                        <!-- Grid Daftar Akun Game Vault -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                            @foreach($vaultAccounts as $acc)
+                                <div class="rounded-lg border p-4 {{ $acc->status === 'borrowed' ? 'border-amber-500/40 bg-amber-500/5' : 'border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/50' }} space-y-3">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded {{ $acc->platform === 'gamepass' ? 'bg-green-500/10 text-green-500' : 'bg-blue-500/10 text-blue-500' }}">
+                                            {{ strtoupper($acc->platform) }}
+                                        </span>
+                                        <span class="px-2 py-0.5 rounded text-[10px] font-bold {{ $acc->status === 'borrowed' ? 'bg-amber-500/20 text-amber-500' : 'bg-emerald-500/20 text-emerald-500' }}">
+                                            {{ $acc->status === 'borrowed' ? 'SEDANG DIPINJAM' : 'TERSEDIA (IDLE)' }}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <div class="font-bold text-sm text-gray-900 dark:text-gray-100">{{ $acc->game_title }}</div>
+                                        <div class="text-xs text-gray-500 mono mt-0.5">User ID: {{ $acc->account_username }}</div>
+                                    </div>
+
+                                    @if($acc->status === 'borrowed')
+                                        <div class="p-2 rounded bg-amber-500/10 border border-amber-500/20 text-xs text-amber-600 dark:text-amber-400 space-y-0.5">
+                                            <div class="font-semibold">Dipinjam di: {{ $acc->borrowed_by_pc }} ({{ $acc->borrowed_by_member }})</div>
+                                            <div class="text-[10px] text-gray-400">Waktu Pinjam: {{ $acc->borrowed_at ? $acc->borrowed_at->format('H:i:s') : '-' }}</div>
+                                        </div>
+                                        <form action="{{ route('kasir.vault.release', $acc) }}" method="POST">
+                                            @csrf
+                                            <button type="submit" class="w-full py-1.5 rounded bg-gray-200 dark:bg-gray-800 hover:bg-red-500 hover:text-white text-xs font-semibold transition">
+                                                Paksa Kembalikan ke Tersedia
+                                            </button>
+                                        </form>
+                                    @else
+                                        <div class="p-2 rounded bg-gray-100 dark:bg-gray-900 text-[11px] text-gray-400">
+                                            Siap dialokasikan otomatis saat pelanggan VIP/VIP++ mengklik "Pinjam Akun" di client C++.
+                                        </div>
+                                    @endif
+                                </div>
+                            @endforeach
+                        </div>
                     </div>
                 </div>
 

@@ -8,6 +8,8 @@ use App\Models\Member;
 use App\Models\BillingPackage;
 use App\Models\FoodMenu;
 use App\Models\Order;
+use App\Models\GameVaultAccount;
+use App\Models\DisklessServerConfig;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -50,6 +52,9 @@ class KasirController extends Controller
             ->orderBy('id')
             ->get();
 
+        $vaultAccounts = GameVaultAccount::orderBy('game_title')->get();
+        $disklessConfigs = DisklessServerConfig::all()->pluck('value', 'key');
+
         return view('kasir.dashboard', compact(
             'pcs',
             'members',
@@ -65,7 +70,9 @@ class KasirController extends Controller
             'pendingQrisCount',
             'waitingOrders',
             'cookingOrders',
-            'readyOrders'
+            'readyOrders',
+            'vaultAccounts',
+            'disklessConfigs'
         ));
     }
 
@@ -639,5 +646,34 @@ class KasirController extends Controller
         }
 
         return back()->with('success', "Konfigurasi terminal berhasil diterapkan: $regCount Reguler, $vipCount VIP, $vipPlusCount VIP++ (Total $totalDesired PC).");
+    }
+
+    public function toggleSuperUser(Request $request)
+    {
+        $current = DisklessServerConfig::where('key', 'superuser_mode')->value('value') ?? 'STANDBY';
+        $newMode = ($current === 'UPDATING_SUPERUSER') ? 'STANDBY' : 'UPDATING_SUPERUSER';
+        DisklessServerConfig::updateOrCreate(['key' => 'superuser_mode'], ['value' => $newMode]);
+
+        $logMsg = ($newMode === 'UPDATING_SUPERUSER')
+            ? 'Server Diskless masuk Mode Super User. Drive D: terbuka write-access untuk download patch game (Valorant, Genshin, dsb).'
+            : 'Mode Super User dinonaktifkan. Seluruh update game disinkronkan dan dikunci read-only untuk 15 PC Client.';
+        DisklessServerConfig::updateOrCreate(['key' => 'last_update_log'], ['value' => $logMsg]);
+
+        return back()->with('success', $logMsg);
+    }
+
+    public function releaseVaultAccount(GameVaultAccount $account)
+    {
+        $title = $account->game_title;
+        $accUser = $account->account_username;
+
+        $account->update([
+            'status' => 'available',
+            'borrowed_by_pc' => null,
+            'borrowed_by_member' => null,
+            'borrowed_at' => null,
+        ]);
+
+        return back()->with('success', "Lisensi Akun $title ($accUser) berhasil dikembalikan ke status Tersedia.");
     }
 }

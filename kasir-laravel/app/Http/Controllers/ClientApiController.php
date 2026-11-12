@@ -9,6 +9,8 @@ use App\Models\BillingPackage;
 use App\Models\FoodMenu;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\GameVaultAccount;
+use App\Models\DisklessServerConfig;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -19,10 +21,14 @@ class ClientApiController extends Controller
     {
         $pcCode = $request->input('pc_code');
         $pcType = 'all';
+        $pcSpecs = '';
+        $hourlyRate = 10000;
         if ($pcCode) {
             $pc = PcClient::where('pc_code', $pcCode)->first();
-            if ($pc && $pc->pc_type) {
-                $pcType = $pc->pc_type;
+            if ($pc) {
+                if ($pc->pc_type) $pcType = $pc->pc_type;
+                if ($pc->specs) $pcSpecs = $pc->specs;
+                if ($pc->hourly_rate) $hourlyRate = $pc->hourly_rate;
             }
         }
 
@@ -33,11 +39,25 @@ class ClientApiController extends Controller
         $packages = $packagesQuery->orderBy('price')->get();
         $menus = FoodMenu::where('is_available', true)->orderBy('category')->orderBy('name')->get();
 
+        $disklessInfo = [
+            'master_drive' => DisklessServerConfig::where('key', 'master_drive')->value('value') ?? '4TB NVMe PCIe Gen4 Enterprise (Drive D: Games)',
+            'network_speed' => DisklessServerConfig::where('key', 'network_speed')->value('value') ?? '2.5GbE Full-Duplex Switch 16-Port',
+            'superuser_mode' => DisklessServerConfig::where('key', 'superuser_mode')->value('value') ?? 'STANDBY',
+        ];
+
+        $vaultAccounts = GameVaultAccount::select('id', 'game_title', 'platform', 'status', 'borrowed_by_pc')
+            ->orderBy('game_title')
+            ->get();
+
         return response()->json([
             'success' => true,
             'pc_type' => $pcType,
+            'specs' => $pcSpecs,
+            'hourly_rate' => $hourlyRate,
             'packages' => $packages,
             'menus' => $menus,
+            'diskless' => $disklessInfo,
+            'game_vault' => $vaultAccounts,
         ]);
     }
 
@@ -56,7 +76,14 @@ class ClientApiController extends Controller
             if ($pc->session_end_at) {
                 $remaining = max(0, (int) Carbon::now()->diffInSeconds($pc->session_end_at, false));
                 if ($remaining <= 0) {
-                    // Time expired -> auto lock PC
+                    // Time expired -> auto lock PC & kembalikan lisensi game vault jika ada
+                    GameVaultAccount::where('borrowed_by_pc', $pcCode)->update([
+                        'status' => 'available',
+                        'borrowed_by_pc' => null,
+                        'borrowed_by_member' => null,
+                        'borrowed_at' => null,
+                    ]);
+
                     if ($pc->member) {
                         $pc->member->update(['saved_seconds' => 0]);
                     }
@@ -165,6 +192,15 @@ class ClientApiController extends Controller
     public function logout(Request $request)
     {
         $pcCode = $request->input('pc_code', 'PC-01');
+
+        // Otomatis kembalikan lisensi game vault yang dipinjam terminal ini
+        GameVaultAccount::where('borrowed_by_pc', $pcCode)->update([
+            'status' => 'available',
+            'borrowed_by_pc' => null,
+            'borrowed_by_member' => null,
+            'borrowed_at' => null,
+        ]);
+
         $pc = PcClient::with('member')->where('pc_code', $pcCode)->first();
         if ($pc) {
             $rem = $pc->computeRemainingSeconds();
@@ -181,6 +217,85 @@ class ClientApiController extends Controller
         }
 
         return response()->json(['success' => true]);
+    }
+
+    public function borrowGameVault(Request $request)
+    {
+        $pcCode = $request->input('pc_code', 'PC-01');
+        $gameTitle = $request->input('game_title', '');
+
+        $pc = PcClient::where('pc_code', $pcCode)->first();
+        if (!$pc || $pc->is_locked) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Terminal PC belum aktif atau masih dalam kondisi terkunci!',
+            ], 403);
+        }
+
+        if (!in_array($pc->pc_type, ['vip', 'vip++'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Layanan Pinjam Akun Game AAA Warnet hanya tersedia untuk Terminal VIP dan VIP++! Silakan beralih ke PC VIP/VIP++.',
+            ], 403);
+        }
+
+        // Cari akun yang tersedia untuk game ini
+        $account = GameVaultAccount::where('game_title', $gameTitle)
+            ->where('status', 'available')
+            ->first();
+
+        if (!$account) {
+            // Cek apakah PC ini sendiri yang sedang meminjam akun ini
+            $existing = GameVaultAccount::where('game_title', $gameTitle)
+                ->where('borrowed_by_pc', $pcCode)
+                ->first();
+            if ($existing) {
+                return response()->json([
+                    'success' => true,
+                    'message' => "Anda telah meminjam akun {$gameTitle} sebelumnya. Meluncurkan game...",
+                    'account_username' => $existing->account_username,
+                    'account_token' => $existing->account_token,
+                    'platform' => $existing->platform,
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => "Seluruh lisensi akun sharing untuk {$gameTitle} sedang dipinjam oleh terminal lain. Silakan coba kembali beberapa saat lagi!",
+            ], 404);
+        }
+
+        $memberName = $pc->member ? $pc->member->username : 'Guest';
+        $account->update([
+            'status' => 'borrowed',
+            'borrowed_by_pc' => $pcCode,
+            'borrowed_by_member' => $memberName,
+            'borrowed_at' => Carbon::now(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Berhasil meminjam Akun {$gameTitle}! Auto-login Steam diaktifkan.",
+            'account_username' => $account->account_username,
+            'account_token' => $account->account_token,
+            'platform' => $account->platform,
+        ]);
+    }
+
+    public function returnGameVault(Request $request)
+    {
+        $pcCode = $request->input('pc_code', 'PC-01');
+        GameVaultAccount::where('borrowed_by_pc', $pcCode)->update([
+            'status' => 'available',
+            'borrowed_by_pc' => null,
+            'borrowed_by_member' => null,
+            'borrowed_at' => null,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Seluruh akun game vault yang dipinjam telah dikembalikan ke sistem.',
+        ]);
     }
 
     public function buyBilling(Request $request)

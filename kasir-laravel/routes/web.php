@@ -39,17 +39,23 @@ Route::post('/kasir/packages/{package}/delete', [KasirController::class, 'destro
 Route::post('/kasir/orders/{order}/kitchen-status', [KasirController::class, 'updateKitchenStatus'])->name('kasir.order.kitchen');
 Route::post('/kasir/orders/{order}/confirm-payment', [KasirController::class, 'confirmOrderPayment'])->name('kasir.order.pay');
 
+// Diskless Server & Game Vault Management
+Route::post('/kasir/diskless/toggle-superuser', [KasirController::class, 'toggleSuperUser'])->name('kasir.diskless.superuser');
+Route::post('/kasir/vault/{account}/release', [KasirController::class, 'releaseVaultAccount'])->name('kasir.vault.release');
+
 // =========================================================
 // REST API ROUTES: UNTUK CLIENT C++ NATIVE (NO CSRF)
 // =========================================================
 Route::prefix('api/client')
     ->withoutMiddleware([ValidateCsrfToken::class])
     ->group(function () {
-        Route::get('/catalog', [ClientApiController::class, 'catalog']);
+        Route::match(['get', 'post'], '/catalog', [ClientApiController::class, 'catalog']);
         Route::post('/heartbeat', [ClientApiController::class, 'heartbeat']);
         Route::post('/login', [ClientApiController::class, 'login']);
         Route::post('/logout', [ClientApiController::class, 'logout']);
         Route::post('/buy-billing', [ClientApiController::class, 'buyBilling']);
         Route::post('/order-food', [ClientApiController::class, 'orderFood']);
         Route::post('/confirm-qris', [ClientApiController::class, 'confirmQris']);
+        Route::post('/game-vault/borrow', [ClientApiController::class, 'borrowGameVault']);
+        Route::post('/game-vault/return', [ClientApiController::class, 'returnGameVault']);
     });
