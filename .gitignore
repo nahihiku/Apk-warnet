@@ -24,3 +24,8 @@ client-cpp/*.obj
 Thumbs.db
 .vscode/
 .idea/
+
+# AI Agent & Rules
+GEMINI.md
+.gemini/
+.agents/
