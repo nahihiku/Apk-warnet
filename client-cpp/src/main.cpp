@@ -150,8 +150,10 @@ void apply_window_mode(ClientWindowMode mode) {
         g_kiosk_block_keys = false;
         set_taskbar_visible(true);
         SetWindowLong(g_hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
-        int ww = 1180;
-        int wh = 740;
+        int ww = (sw > 1220) ? 1180 : (sw - 24);
+        int wh = (sh > 780) ? 740 : (sh - 48);
+        if (ww < 860) ww = sw;
+        if (wh < 600) wh = sh;
         int wx = (sw - ww) / 2;
         int wy = (sh - wh) / 2;
         if (wx < 0) wx = 0;
@@ -1048,6 +1050,9 @@ void draw_text(Graphics& g, const std::string& text, int x, int y, int w, int h,
     format.SetAlignment(align);
     format.SetLineAlignment(valign);
     format.SetTrimming(StringTrimmingEllipsisCharacter);
+    if (h <= font_size * 2.1f) {
+        format.SetFormatFlags(StringFormatFlagsNoWrap);
+    }
     std::wstring wtext = to_wstring_utf8(text);
     g.DrawString(wtext.c_str(), -1, &font, layoutRect, &format, &brush);
 }
@@ -1351,41 +1356,57 @@ void render_ui(HDC hdc, int width, int height) {
         g.FillRectangle(&headerBg, 0, 4, width, 76);
         g.DrawLine(&borderPen, 0, 80, width, 80);
 
+        // Responsive Header Bar
+        bool compact_ui = (width < 1060);
+        int pad_x = compact_ui ? 14 : 24;
+        int logout_w = compact_ui ? 124 : 140;
+        int logout_x = width - pad_x - logout_w;
+        int mini_w = compact_ui ? 148 : 178;
+        int mini_x = logout_x - 10 - mini_w;
+        int time_w = compact_ui ? 146 : 196;
+        int time_x = mini_x - 10 - time_w;
+        int bal_w = compact_ui ? 140 : 185;
+        int bal_x = time_x - 10 - bal_w;
+
+        int stat_w = compact_ui ? 126 : 148;
+        int mem_x = pad_x + stat_w + 12;
+        int mem_w = (std::max)(100, bal_x - mem_x - 10);
+
         // Station Badge in Header
         SolidBrush stationBg(tierBgCol);
-        fill_round_rect(g, &stationBg, 24, 18, 150, 48, 10);
-        draw_text(g, pc_code + " [" + tierTitle + "]", 24, 18, 150, 48, 14.5f, tierCol, FontStyleBold, StringAlignmentCenter, StringAlignmentCenter);
+        fill_round_rect(g, &stationBg, pad_x, 18, stat_w, 48, 10);
+        draw_text(g, pc_code + " [" + tierTitle + "]", pad_x, 18, stat_w, 48, compact_ui ? 13.0f : 14.5f, tierCol, FontStyleBold, StringAlignmentCenter, StringAlignmentCenter);
 
         // Member Info
-        draw_text(g, "MEMBER AKTIF", 188, 18, 170, 20, 10.5f, Color(255, 148, 163, 184), FontStyleBold);
+        draw_text(g, "MEMBER AKTIF", mem_x, 18, mem_w, 20, 10.0f, Color(255, 148, 163, 184), FontStyleBold);
         draw_text(g, member_name + (member_user.empty() ? "" : " (@" + member_user + ")"),
-                  188, 38, 230, 26, 14.5f, Color(255, 248, 250, 252), FontStyleBold);
+                  mem_x, 38, mem_w, 26, compact_ui ? 13.0f : 14.5f, Color(255, 248, 250, 252), FontStyleBold);
 
         // Balance Card in Header
         SolidBrush balBg(Color(35, 16, 185, 129));
-        fill_round_rect(g, &balBg, 430, 16, 195, 52, 10);
-        draw_text(g, "SALDO MEMBER", 442, 20, 170, 18, 10.0f, Color(255, 110, 231, 183), FontStyleBold);
-        draw_text(g, format_rupiah(member_balance), 442, 38, 170, 26, 16.0f, Color(255, 52, 211, 153), FontStyleBold);
+        fill_round_rect(g, &balBg, bal_x, 16, bal_w, 52, 10);
+        draw_text(g, "SALDO MEMBER", bal_x + 10, 20, bal_w - 20, 18, 9.5f, Color(255, 110, 231, 183), FontStyleBold);
+        draw_text(g, format_rupiah(member_balance), bal_x + 10, 38, bal_w - 20, 26, compact_ui ? 14.0f : 16.0f, Color(255, 52, 211, 153), FontStyleBold);
 
         // Remaining Timer Card in Header
         bool low_time = (remaining_seconds < 300);
         SolidBrush timeBg(low_time ? Color(45, 239, 68, 68) : Color(40, 99, 102, 241));
-        fill_round_rect(g, &timeBg, 638, 16, 210, 52, 10);
-        draw_text(g, "SISA WAKTU BILLING", 650, 20, 185, 18, 10.0f,
+        fill_round_rect(g, &timeBg, time_x, 16, time_w, 52, 10);
+        draw_text(g, "SISA WAKTU", time_x + 10, 20, time_w - 20, 18, 9.5f,
                   low_time ? Color(255, 252, 165, 165) : Color(255, 165, 180, 252), FontStyleBold);
-        draw_text(g, format_timer(remaining_seconds), 650, 36, 185, 28, 20.0f,
+        draw_text(g, format_timer(remaining_seconds), time_x + 10, 36, time_w - 20, 28, compact_ui ? 17.5f : 20.0f,
                   low_time ? Color(255, 248, 113, 113) : Color(255, 224, 231, 255), FontStyleBold);
 
         // Minimize to Mini Bar / Game Mode Button
-        draw_button(g, width - 365, 21, 185, 42, "Bilah Mini / Desktop",
-                    Color(255, 51, 65, 85), Color(255, 255, 255, 255), "minimize_to_bar", 0, 8, 12.0f);
+        draw_button(g, mini_x, 21, mini_w, 42, "Bilah Mini / Desktop",
+                    Color(255, 51, 65, 85), Color(255, 255, 255, 255), "minimize_to_bar", 0, 8, compact_ui ? 11.0f : 12.0f);
 
         // Logout / Lock Button
-        draw_button(g, width - 165, 21, 140, 42, "LOGOUT / SELESAI",
-                    Color(255, 220, 38, 38), Color(255, 255, 255, 255), "do_logout", 0, 8, 12.0f);
+        draw_button(g, logout_x, 21, logout_w, 42, "LOGOUT / SELESAI",
+                    Color(255, 220, 38, 38), Color(255, 255, 255, 255), "do_logout", 0, 8, compact_ui ? 11.0f : 12.0f);
 
         // Left Navigation Sidebar
-        int side_w = 230;
+        int side_w = compact_ui ? 186 : 230;
         SolidBrush sideBg(Color(200, 15, 23, 42));
         g.FillRectangle(&sideBg, 0, 81, side_w, height - 81);
         g.DrawLine(&borderPen, side_w, 81, side_w, height);
@@ -1406,30 +1427,30 @@ void render_ui(HDC hdc, int width, int height) {
             Color fg = active ? Color(255, 15, 23, 42) : Color(255, 203, 213, 225);
             if (active) {
                 SolidBrush b(bg);
-                fill_round_rect(g, &b, 16, nav_y, side_w - 32, 46, 10);
+                fill_round_rect(g, &b, 14, nav_y, side_w - 28, 46, 10);
             }
-            draw_text(g, nav.label, 30, nav_y, side_w - 60, 46, 14.0f, fg, active ? FontStyleBold : FontStyleRegular);
+            draw_text(g, nav.label, 26, nav_y, side_w - 52, 46, compact_ui ? 13.0f : 14.0f, fg, active ? FontStyleBold : FontStyleRegular);
             if (!nav.badge.empty() && nav.badge != "0") {
                 SolidBrush badgeBg(active ? Color(255, 15, 23, 42) : Color(255, 245, 158, 11));
-                fill_round_rect(g, &badgeBg, side_w - 54, nav_y + 12, 28, 22, 6);
-                draw_text(g, nav.badge, side_w - 54, nav_y + 12, 28, 22, 11.0f,
+                fill_round_rect(g, &badgeBg, side_w - 50, nav_y + 12, 26, 22, 6);
+                draw_text(g, nav.badge, side_w - 50, nav_y + 12, 26, 22, 11.0f,
                           active ? Color(255, 56, 189, 248) : Color(255, 15, 23, 42), FontStyleBold, StringAlignmentCenter);
             }
-            add_hit_zone(16, nav_y, side_w - 32, 46, "switch_tab", nav.idx);
+            add_hit_zone(14, nav_y, side_w - 28, 46, "switch_tab", nav.idx);
             nav_y += 56;
         }
 
         // Connection status at bottom of sidebar
         draw_text(g, server_online ? "Terhubung ke Kasir Laravel" : "Putus dari Server Kasir",
-                  20, height - 55, side_w - 30, 22, 11.5f,
+                  16, height - 55, side_w - 24, 22, 11.0f,
                   server_online ? Color(255, 52, 211, 153) : Color(255, 248, 113, 113), FontStyleBold);
         draw_text(g, server_host + ":" + std::to_string(server_port),
-                  20, height - 34, side_w - 30, 18, 11.0f, Color(255, 100, 116, 139));
+                  16, height - 34, side_w - 24, 18, 11.0f, Color(255, 100, 116, 139));
 
         // Content Area
-        int cx = side_w + 28;
+        int cx = side_w + (compact_ui ? 20 : 28);
         int cy = 102;
-        int cw = width - cx - 28;
+        int cw = width - cx - (compact_ui ? 20 : 28);
         int ch = height - cy - 24;
 
         if (g_active_tab == 0) {
@@ -1446,44 +1467,50 @@ void render_ui(HDC hdc, int width, int height) {
                 server_games_copy = g_state.server_games;
             }
 
-            draw_text(g, "KATALOG & PELUNCUR GAME SERVER", cx, cy, cw - 380, 26, 19.0f, Color(255, 248, 250, 252), FontStyleBold);
-            draw_text(g, "Daftar game tersinkron langsung dari PC Server (" + total_games_lbl + ").",
-                      cx, cy + 28, cw - 380, 20, 11.5f, Color(255, 148, 163, 184));
+            int act_w = (cw < 780) ? 148 : 172;
+            int act_gap = 8;
+            int title_w = (std::max)(180, cw - (act_w * 2 + act_gap + 12));
+
+            draw_text(g, "KATALOG & PELUNCUR GAME", cx, cy, title_w, 26, (cw < 780) ? 16.5f : 19.0f, Color(255, 248, 250, 252), FontStyleBold);
+            draw_text(g, "Sinkron langsung dari PC Server (" + total_games_lbl + ")",
+                      cx, cy + 27, title_w, 20, 11.0f, Color(255, 148, 163, 184));
 
             // Quick actions
-            draw_button(g, cx + cw - 360, cy, 170, 34, "Buka Desktop Windows",
-                        Color(255, 51, 65, 85), Color(255, 255, 255, 255), "minimize_to_bar", 0, 8, 11.5f);
-            draw_button(g, cx + cw - 180, cy, 180, 34, "Buka Drive D:\\Games",
-                        Color(255, 30, 41, 59), Color(255, 56, 189, 248), "open_game_folder", 0, 8, 11.5f);
+            draw_button(g, cx + cw - (act_w * 2 + act_gap), cy, act_w, 34, "Desktop Windows",
+                        Color(255, 51, 65, 85), Color(255, 255, 255, 255), "minimize_to_bar", 0, 8, 11.0f);
+            draw_button(g, cx + cw - act_w, cy, act_w, 34, "Buka Drive D:\\Games",
+                        Color(255, 30, 41, 59), Color(255, 56, 189, 248), "open_game_folder", 0, 8, 11.0f);
 
             // Diskless Server & Vault status banner
             SolidBrush disklessBg(Color(255, 15, 23, 42));
             fill_round_rect(g, &disklessBg, cx, cy + 54, cw, 34, 8);
             draw_round_rect(g, &borderPen, cx, cy + 54, cw, 34, 8);
-            std::string disklessText = "SERVER DISKLESS / LOKAL: " + total_games_lbl + " • Sinkronisasi Otomatis Katalog & Patch dari Kasir Server";
+            std::string disklessText = "SERVER DISKLESS / LOKAL: " + total_games_lbl + " | Sinkronisasi Otomatis Katalog dari Kasir Server";
             if (!g_active_vault_user.empty()) {
-                disklessText = "LISENSI STEAM SHARING AKTIF: " + g_active_vault_game + " (" + g_active_vault_user + ") • Bebas Main Game AAA Resmi!";
+                disklessText = "LISENSI STEAM SHARING AKTIF: " + g_active_vault_game + " (" + g_active_vault_user + ") | Bebas Main Game AAA Resmi!";
             }
-            draw_text(g, disklessText, cx + 14, cy + 54, cw - 28, 34, 11.0f, !g_active_vault_user.empty() ? Color(255, 251, 191, 36) : Color(255, 34, 211, 238), FontStyleBold, StringAlignmentNear);
+            draw_text(g, disklessText, cx + 14, cy + 54, cw - 28, 34, 10.5f, !g_active_vault_user.empty() ? Color(255, 251, 191, 36) : Color(255, 34, 211, 238), FontStyleBold, StringAlignmentNear);
 
             // Filter Buttons Row
             int f_btn_y = cy + 96;
-            int f_btn_gap = 10;
+            int f_btn_gap = 8;
             struct GameFilterItem { std::string key; std::string label; };
             std::vector<GameFilterItem> gFilters = {
                 { "all", "Semua Game" },
                 { "f2p", "Kelas Reguler" },
                 { "vip", "Kelas VIP" },
-                { "vip_plus", "Kelas VIP++ Ultra" },
+                { "vip_plus", "VIP++ Ultra" },
                 { "tools", "Platform & Tools" }
             };
 
             int cur_fx = cx;
+            int all_w = (cw < 780) ? 94 : 110;
+            int other_w = (cw < 780) ? ((cw - all_w - f_btn_gap * 4) / 4) : 145;
             for (const auto& gf : gFilters) {
                 bool is_active_f = (g_game_category_filter == gf.key);
                 Color f_bg = is_active_f ? Color(255, 6, 182, 212) : Color(255, 30, 41, 59);
                 Color f_fg = is_active_f ? Color(255, 15, 23, 42) : Color(255, 203, 213, 225);
-                int btn_width = (gf.key == "all") ? 110 : 145;
+                int btn_width = (gf.key == "all") ? all_w : other_w;
                 draw_button(g, cur_fx, f_btn_y, btn_width, 28, gf.label, f_bg, f_fg, "filter_game_" + gf.key, 0, 6, 10.5f);
                 cur_fx += btn_width + f_btn_gap;
             }
@@ -1505,7 +1532,7 @@ void render_ui(HDC hdc, int width, int height) {
                 }
             }
 
-            int cols = 3;
+            int cols = (cw >= 820) ? 3 : 2;
             int gap = 12;
             int card_w = (cw - gap * (cols - 1)) / cols;
             int card_h = 98;
@@ -1541,26 +1568,29 @@ void render_ui(HDC hdc, int width, int height) {
                     draw_round_rect(g, &borderPen, gx, gy, card_w, card_h, 12);
 
                     // Category pill
+                    int cat_w = (std::min)(124, card_w - 94);
                     SolidBrush catBg(Color(45, 6, 182, 212));
-                    fill_round_rect(g, &catBg, gx + 14, gy + 10, 122, 18, 4);
-                    draw_text(g, gm.category, gx + 14, gy + 10, 122, 18, 8.5f, Color(255, 34, 211, 238), FontStyleBold, StringAlignmentCenter);
+                    fill_round_rect(g, &catBg, gx + 14, gy + 10, cat_w, 18, 4);
+                    draw_text(g, gm.category, gx + 14, gy + 10, cat_w, 18, 8.5f, Color(255, 34, 211, 238), FontStyleBold, StringAlignmentCenter);
 
                     // Tier requirement badge
                     if (gm.min_tier == "vip++") {
                         SolidBrush tierBg(Color(55, 168, 85, 247));
-                        fill_round_rect(g, &tierBg, gx + 142, gy + 10, 74, 18, 4);
-                        draw_text(g, "VIP++ ULTRA", gx + 142, gy + 10, 74, 18, 8.5f, Color(255, 216, 180, 254), FontStyleBold, StringAlignmentCenter);
+                        fill_round_rect(g, &tierBg, gx + 20 + cat_w, gy + 10, 74, 18, 4);
+                        draw_text(g, "VIP++ ULTRA", gx + 20 + cat_w, gy + 10, 74, 18, 8.5f, Color(255, 216, 180, 254), FontStyleBold, StringAlignmentCenter);
                     } else if (gm.min_tier == "vip") {
                         SolidBrush tierBg(Color(55, 245, 158, 11));
-                        fill_round_rect(g, &tierBg, gx + 142, gy + 10, 62, 18, 4);
-                        draw_text(g, "VIP ONLY", gx + 142, gy + 10, 62, 18, 8.5f, Color(255, 251, 191, 36), FontStyleBold, StringAlignmentCenter);
+                        fill_round_rect(g, &tierBg, gx + 20 + cat_w, gy + 10, 62, 18, 4);
+                        draw_text(g, "VIP ONLY", gx + 20 + cat_w, gy + 10, 62, 18, 8.5f, Color(255, 251, 191, 36), FontStyleBold, StringAlignmentCenter);
                     }
 
                     // Game Name & Publisher + Size
+                    int btn_space = gm.is_vault_game ? 132 : 114;
+                    int info_w = (std::max)(80, card_w - btn_space - 18);
                     draw_text(g, gm.name, gx + 14, gy + 31, card_w - 28, 22, 13.0f, Color(255, 248, 250, 252), FontStyleBold);
-                    draw_text(g, gm.publisher, gx + 14, gy + 53, card_w - 140, 16, 10.0f, Color(255, 148, 163, 184));
+                    draw_text(g, gm.publisher, gx + 14, gy + 53, info_w, 16, 10.0f, Color(255, 148, 163, 184));
                     if (!gm.size_formatted.empty()) {
-                        draw_text(g, "Ukuran: " + gm.size_formatted, gx + 14, gy + 70, card_w - 140, 16, 9.5f, Color(255, 100, 116, 139));
+                        draw_text(g, "Ukuran: " + gm.size_formatted, gx + 14, gy + 70, info_w, 16, 9.5f, Color(255, 100, 116, 139));
                     }
 
                     // Action Button based on Tier & Vault requirement
@@ -1598,8 +1628,8 @@ void render_ui(HDC hdc, int width, int height) {
             draw_text(g, "Pilih paket billing di bawah. Anda bisa membayar langsung menggunakan Saldo Member (otomatis aktif) atau Scan QRIS.",
                       cx, cy + 32, cw, 24, 13.0f, Color(255, 148, 163, 184));
 
-            int cols = 3;
-            int gap = 18;
+            int cols = (cw >= 800) ? 3 : 2;
+            int gap = 16;
             int card_w = (cw - gap * (cols - 1)) / cols;
             int card_h = 195;
             int start_y = cy + 72;
@@ -1658,33 +1688,35 @@ void render_ui(HDC hdc, int width, int height) {
             // -------------------------------------------------
             // TAB 2: PESAN MAKANAN & MINUMAN (F&B CAFE)
             // -------------------------------------------------
-            int cart_w = 310;
-            int menu_w = cw - cart_w - 20;
+            int cart_w = (cw < 780) ? 265 : 310;
+            int menu_w = cw - cart_w - 18;
 
-            draw_text(g, "KATALOG MAKANAN & MINUMAN WARNET", cx, cy, menu_w, 28, 19.0f, Color(255, 248, 250, 252), FontStyleBold);
+            draw_text(g, "KATALOG MAKANAN & MINUMAN WARNET", cx, cy, menu_w, 28, (cw < 780) ? 16.5f : 19.0f, Color(255, 248, 250, 252), FontStyleBold);
 
             // Category Filter Pills
             struct CatFilter { std::string key; std::string label; };
             std::vector<CatFilter> cats = {
                 {"all", "Semua Menu"},
-                {"makanan", "Makanan Berat"},
-                {"minuman", "Minuman Segar"},
-                {"snack", "Snack & Cemilan"}
+                {"makanan", "Makanan"},
+                {"minuman", "Minuman"},
+                {"snack", "Snack"}
             };
             int fx = cx;
+            int cgap = 8;
+            int cat_btn_w = (std::min)(132, (menu_w - cgap * 3) / 4);
             for (const auto& cat : cats) {
                 bool active = (g_food_category_filter == cat.key);
-                draw_button(g, fx, cy + 36, 132, 32, cat.label,
+                draw_button(g, fx, cy + 36, cat_btn_w, 32, cat.label,
                             active ? Color(255, 6, 182, 212) : Color(255, 30, 41, 59),
                             active ? Color(255, 15, 23, 42) : Color(255, 203, 213, 225),
-                            "filter_cat_" + cat.key, 0, 8, 11.5f);
-                fx += 140;
+                            "filter_cat_" + cat.key, 0, 8, 11.0f);
+                fx += cat_btn_w + cgap;
             }
 
-            // Menu Grid (2 Columns)
-            int cols = 2;
-            int gap = 14;
-            int card_w = (menu_w - gap) / cols;
+            // Menu Grid (1-2 Columns)
+            int cols = (menu_w >= 490) ? 2 : 1;
+            int gap = 12;
+            int card_w = (menu_w - gap * (cols - 1)) / cols;
             int card_h = 98;
             int my = cy + 82;
             int idx_drawn = 0;
@@ -1717,7 +1749,7 @@ void render_ui(HDC hdc, int width, int height) {
             }
 
             // Right Cart Panel
-            int rx = cx + menu_w + 20;
+            int rx = cx + menu_w + 18;
             SolidBrush cartBg(Color(235, 15, 23, 42));
             fill_round_rect(g, &cartBg, rx, cy, cart_w, ch, 14);
             draw_round_rect(g, &borderPen, rx, cy, cart_w, ch, 14);
@@ -1735,7 +1767,7 @@ void render_ui(HDC hdc, int width, int height) {
                 count_items += m.cart_qty;
 
                 if (list_y < cy + ch - 210) {
-                    draw_text(g, std::to_string(m.cart_qty) + "x " + m.name, rx + 18, list_y, 175, 22, 12.5f, Color(255, 226, 232, 240), FontStyleBold);
+                    draw_text(g, std::to_string(m.cart_qty) + "x " + m.name, rx + 18, list_y, cart_w - 135, 22, 12.0f, Color(255, 226, 232, 240), FontStyleBold);
                     draw_text(g, format_rupiah(sub), rx + cart_w - 115, list_y, 97, 22, 12.5f, Color(255, 52, 211, 153), FontStyleBold, StringAlignmentFar);
                     list_y += 28;
                 }
@@ -1831,8 +1863,9 @@ void render_ui(HDC hdc, int width, int height) {
             // -------------------------------------------------
             draw_text(g, "INFORMASI & PENGATURAN TERMINAL CLIENT", cx, cy, cw, 30, 19.0f, Color(255, 248, 250, 252), FontStyleBold);
             SolidBrush cardBg(Color(220, 30, 41, 59));
-            fill_round_rect(g, &cardBg, cx, cy + 45, 560, 280, 14);
-            draw_round_rect(g, &borderPen, cx, cy + 45, 560, 280, 14);
+            int infoCardW = (std::min)(560, cw);
+            fill_round_rect(g, &cardBg, cx, cy + 45, infoCardW, 280, 14);
+            draw_round_rect(g, &borderPen, cx, cy + 45, infoCardW, 280, 14);
 
             draw_text(g, "Terminal PC: " + pc_code + " [" + tierTitle + "]", cx + 24, cy + 68, 510, 28, 16.0f, tierCol, FontStyleBold);
             std::string sSpecs = specs.empty() ? "Intel Core i5 / Dedicated GPU / Gaming Display" : specs;
