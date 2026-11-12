@@ -134,6 +134,119 @@ PS1;
     return response($script, 200, ['Content-Type' => 'text/plain; charset=utf-8']);
 })->name('download.setup');
 
+Route::get('/download/share-server.bat', function (\Illuminate\Http\Request $request) {
+    $cfg = \App\Models\DisklessServerConfig::getGameShareConfig($request->getHost());
+    $srcPrimary = $cfg['source_path'];
+    $namePrimary = $cfg['share_name'];
+    $srcExtra = $cfg['extra_source_path'];
+    $nameExtra = $cfg['extra_share_name'];
+    $shareUser = $cfg['share_user'] !== '' ? $cfg['share_user'] : 'UkikuraClient';
+    $sharePass = $cfg['share_pass'];
+
+    $template = <<<'BAT'
+@echo off
+title UKIKURA ICAFE - BAGIKAN DRIVE GAME SERVER (ADMIN)
+color 0B
+
+:: Minta hak Administrator otomatis via UAC
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    echo [INFO] Meminta izin Administrator untuk membuat Network Share Game Server...
+    powershell -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
+)
+
+echo ============================================================================
+echo    UKIKURA ICAFE - KONFIGURASI SERVER NETWORK GAME DISK
+echo ============================================================================
+echo.
+echo   Folder Sumber Utama : __SRC_PRIMARY__
+echo   Nama Share Utama    : __NAME_PRIMARY__
+echo   Folder Tambahan     : __SRC_EXTRA__
+echo   Nama Share Tambahan : __NAME_EXTRA__
+echo.
+
+echo [1/4] Konfigurasi akun Read-Only Windows SMB (untuk Windows 11 Client)
+set "SMB_USER=__SHARE_USER__"
+set "SMB_PASS=__SHARE_PASS__"
+set /p "INPUT_USER=Nama akun SMB Read-Only [Default: %SMB_USER%]: "
+if not "%INPUT_USER%"=="" set "SMB_USER=%INPUT_USER%"
+if "%SMB_PASS%"=="" (
+    echo   (Penting: Windows 11 Client memblokir guest tanpa password secara default.)
+    set /p "SMB_PASS=Masukkan password untuk akun %SMB_USER% (contoh: ukikura123): "
+)
+
+set "GRANT_CLAUSE=/GRANT:Everyone,READ"
+if not "%SMB_PASS%"=="" (
+    net user "%SMB_USER%" >nul 2>&1
+    if errorlevel 1 (
+        net user "%SMB_USER%" "%SMB_PASS%" /add /comment:"Ukikura Game Share Read-Only" /passwordchg:no
+    ) else (
+        net user "%SMB_USER%" "%SMB_PASS%" /passwordchg:no
+    )
+    powershell -NoProfile -Command "Try { Set-LocalUser -Name '%SMB_USER%' -PasswordNeverExpires $true } Catch {}" >nul 2>&1
+    set "GRANT_CLAUSE=/GRANT:%SMB_USER%,READ /GRANT:Everyone,READ"
+)
+
+echo.
+echo [2/4] Membuat SMB Share Utama: __NAME_PRIMARY__ -^> __SRC_PRIMARY__
+set "PS_SRC=__SRC_PRIMARY__"
+set "PS_NAME=__NAME_PRIMARY__"
+powershell -NoProfile -Command "$n=$env:PS_NAME; $p=$env:PS_SRC; $u=$env:SMB_USER; $acc=@('Everyone'); if($u -and $env:SMB_PASS){ $acc+= $u }; Remove-SmbShare -Name $n -Force -ErrorAction SilentlyContinue; New-SmbShare -Name $n -Path $p -ReadAccess $acc -Description 'Ukikura Master Game Disk' | Out-Null"
+if errorlevel 1 (
+    echo [ERROR] Gagal membagikan __SRC_PRIMARY__. Pastikan folder/drive tersedia!
+) else (
+    echo [OK] Share __NAME_PRIMARY__ aktif! Client dapat mengakses \\SERVER\__NAME_PRIMARY__
+)
+
+echo.
+echo [3/4] Membuat SMB Share Tambahan (jika folder ada): __NAME_EXTRA__ -^> __SRC_EXTRA__
+set "PS_SRC2=__SRC_EXTRA__"
+set "PS_NAME2=__NAME_EXTRA__"
+if exist "__SRC_EXTRA__" (
+    powershell -NoProfile -Command "$n=$env:PS_NAME2; $p=$env:PS_SRC2; $u=$env:SMB_USER; $acc=@('Everyone'); if($u -and $env:SMB_PASS){ $acc+= $u }; Remove-SmbShare -Name $n -Force -ErrorAction SilentlyContinue; New-SmbShare -Name $n -Path $p -ReadAccess $acc -Description 'Ukikura Secondary Games' | Out-Null"
+    if not errorlevel 1 echo [OK] Share __NAME_EXTRA__ aktif!
+) else (
+    echo [SKIP] Folder __SRC_EXTRA__ tidak ditemukan, dilewati.
+)
+
+echo.
+echo [4/4] Membuka Firewall File ^& Printer Sharing (SMB Port 445)
+netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=Yes >nul 2>&1
+netsh advfirewall firewall add rule name="Ukikura Server Game Share SMB 445" dir=in action=allow protocol=TCP localport=445 >nul 2>&1
+
+echo.
+echo ============================================================================
+echo   SELESAI! LANGKAH TERAKHIR DI DASHBOARD KASIR (Tab Diskless ^& Vault):
+if not "%SMB_PASS%"=="" (
+    echo   Masukkan SMB User: %SMB_USER%   ^|   SMB Pass: %SMB_PASS%
+    echo   lalu klik "Simpan Pengaturan Game Disk Server".
+) else (
+    echo   Share dibuka dalam mode Everyone Read-Only.
+)
+echo   Setelah itu tekan F2/Sinkron di WarnetClient.exe Client/VM!
+echo ============================================================================
+echo.
+pause
+BAT;
+
+    $content = strtr($template, [
+        '__SRC_PRIMARY__' => $srcPrimary,
+        '__NAME_PRIMARY__' => $namePrimary,
+        '__SRC_EXTRA__' => $srcExtra,
+        '__NAME_EXTRA__' => $nameExtra,
+        '__SHARE_USER__' => $shareUser,
+        '__SHARE_PASS__' => $sharePass,
+    ]);
+    $content = str_replace("\r\n", "\n", $content);
+    $content = str_replace("\n", "\r\n", $content);
+
+    return response($content, 200, [
+        'Content-Type' => 'application/octet-stream',
+        'Content-Disposition' => 'attachment; filename="BAGIKAN_DISK_GAME_SERVER.bat"',
+    ]);
+})->name('download.share_server');
+
 Route::get('/vm-setup', function (\Illuminate\Http\Request $request) {
     $baseUrl = htmlspecialchars($request->getSchemeAndHttpHost(), ENT_QUOTES, 'UTF-8');
     $host = htmlspecialchars($request->getHost(), ENT_QUOTES, 'UTF-8');
@@ -172,6 +285,7 @@ Route::get('/vm-setup', function (\Illuminate\Http\Request $request) {
     <a class="btn" href="/download/client">Download WarnetClient.exe</a>
     <a class="btn sec" href="/download/installer">Download install_client.bat</a>
     <a class="btn sec" href="/download/uninstaller">Download uninstall_client.bat</a>
+    <a class="btn sec" href="/download/share-server.bat">Share Drive Server (Jalankan di Server)</a>
   </div>
 
   <h3>Panduan Uji Real di VM</h3>

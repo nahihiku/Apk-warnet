@@ -41,10 +41,13 @@ class ClientApiController extends Controller
         $packages = $packagesQuery->orderBy('price')->get();
         $menus = FoodMenu::where('is_available', true)->orderBy('category')->orderBy('name')->get();
 
+        $gameShare = DisklessServerConfig::getGameShareConfig($request->getHost());
+
         $disklessInfo = [
             'master_drive' => DisklessServerConfig::where('key', 'master_drive')->value('value') ?? '4TB NVMe PCIe Gen4 Enterprise (Drive D: Games)',
             'network_speed' => DisklessServerConfig::where('key', 'network_speed')->value('value') ?? '2.5GbE Full-Duplex Switch 16-Port',
             'superuser_mode' => DisklessServerConfig::where('key', 'superuser_mode')->value('value') ?? 'STANDBY',
+            'game_share' => $gameShare,
         ];
 
         $vaultAccounts = GameVaultAccount::select('id', 'game_title', 'platform', 'status', 'borrowed_by_pc')
@@ -68,6 +71,7 @@ class ClientApiController extends Controller
             'packages' => $packages,
             'menus' => $menus,
             'diskless' => $disklessInfo,
+            'game_share' => $gameShare,
             'game_vault' => $vaultAccounts,
             'games' => $games,
         ]);

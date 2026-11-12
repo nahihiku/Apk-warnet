@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <shellapi.h>
+#include <winnetwk.h>
 #include <tlhelp32.h>
 #include <gdiplus.h>
 #include <string>
@@ -16,6 +17,7 @@
 #include <iomanip>
 #include <thread>
 #include <atomic>
+#include <algorithm>
 #include <cmath>
 
 #include "models.hpp"
@@ -250,6 +252,370 @@ std::string format_timer(int total_seconds) {
     return oss.str();
 }
 
+static std::atomic<bool> g_mounting_drive(false);
+static unsigned long long g_last_mount_attempt_tick = 0;
+
+std::string to_lower_ascii(std::string s) {
+    for (auto& c : s) c = (char)tolower((unsigned char)c);
+    return s;
+}
+
+std::string normalize_alnum_lower(const std::string& s) {
+    std::string out;
+    for (unsigned char c : s) {
+        if (isalnum(c)) out.push_back((char)tolower(c));
+    }
+    return out;
+}
+
+std::string normalize_slashes(std::string p) {
+    for (auto& c : p) {
+        if (c == '/') c = '\\';
+    }
+    while (!p.empty() && (p.front() == '"' || p.front() == ' ')) p.erase(p.begin());
+    while (!p.empty() && (p.back() == '"' || p.back() == ' ')) p.pop_back();
+    return p;
+}
+
+std::string ensure_trailing_backslash(std::string p) {
+    p = normalize_slashes(p);
+    if (!p.empty() && p.back() != '\\') p.push_back('\\');
+    return p;
+}
+
+bool starts_with_ci(const std::string& full, const std::string& prefix) {
+    if (prefix.empty() || full.size() < prefix.size()) return false;
+    return to_lower_ascii(full.substr(0, prefix.size())) == to_lower_ascii(prefix);
+}
+
+bool path_exists_win(const std::string& p) {
+    if (p.empty()) return false;
+    return GetFileAttributesA(p.c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+bool dir_exists_win(const std::string& p) {
+    if (p.empty()) return false;
+    DWORD attr = GetFileAttributesA(p.c_str());
+    return (attr != INVALID_FILE_ATTRIBUTES) && ((attr & FILE_ATTRIBUTE_DIRECTORY) != 0);
+}
+
+bool is_remote_host(const std::string& host) {
+    std::string h = to_lower_ascii(host);
+    return (!h.empty() && h != "127.0.0.1" && h != "localhost" && h != "::1");
+}
+
+std::string pick_available_drive(const std::string& preferred_drive, const std::string& remote_unc, const std::string& exclude_drive = "") {
+    std::vector<std::string> candidates;
+    auto push_unique = [&](const std::string& drv) {
+        if (drv.size() < 2) return;
+        std::string norm;
+        norm.push_back((char)toupper((unsigned char)drv[0]));
+        norm.push_back(':');
+        if (!exclude_drive.empty() && to_lower_ascii(norm) == to_lower_ascii(exclude_drive)) return;
+        for (const auto& existing : candidates) {
+            if (existing == norm) return;
+        }
+        candidates.push_back(norm);
+    };
+
+    push_unique(preferred_drive);
+    for (const char* def : { "G:", "H:", "Z:", "Y:", "X:", "M:" }) {
+        push_unique(def);
+    }
+
+    for (const auto& drv : candidates) {
+        std::string root = drv + "\\";
+        UINT dtype = GetDriveTypeA(root.c_str());
+        if (dtype == DRIVE_NO_ROOT_DIR) {
+            return drv;
+        }
+        if (dtype == DRIVE_REMOTE) {
+            char buf[MAX_PATH] = { 0 };
+            DWORD sz = sizeof(buf);
+            if (WNetGetConnectionA(drv.c_str(), buf, &sz) == NO_ERROR) {
+                if (to_lower_ascii(buf) == to_lower_ascii(remote_unc)) {
+                    return drv;
+                }
+            }
+        }
+    }
+    return preferred_drive;
+}
+
+bool mount_single_share(const std::string& preferred_drive,
+                        const std::string& share_unc,
+                        const std::string& vbox_unc,
+                        const std::string& share_name,
+                        const std::string& share_user,
+                        const std::string& share_pass,
+                        const std::string& exclude_drive,
+                        std::string& out_mount_root,
+                        std::string& out_status_msg) {
+    // Cek VirtualBox Shared Folder lebih dulu apabila Guest Additions terpasang
+    std::string target_unc = share_unc;
+    bool using_vbox = false;
+    if (!vbox_unc.empty() && dir_exists_win(vbox_unc)) {
+        target_unc = vbox_unc;
+        using_vbox = true;
+    }
+
+    if (target_unc.empty()) {
+        out_status_msg = "Alamat Share UNC belum dikonfigurasi";
+        return false;
+    }
+
+    std::string drv = pick_available_drive(preferred_drive, target_unc, exclude_drive);
+    std::string drv_root = drv + "\\";
+
+    // Jika sudah termount ke UNC target dan direktori terbaca, langsung gunakan
+    char existing_buf[MAX_PATH] = { 0 };
+    DWORD existing_sz = sizeof(existing_buf);
+    if (WNetGetConnectionA(drv.c_str(), existing_buf, &existing_sz) == NO_ERROR &&
+        to_lower_ascii(existing_buf) == to_lower_ascii(target_unc) &&
+        dir_exists_win(drv_root)) {
+        out_mount_root = drv_root;
+        out_status_msg = "Drive " + drv + " terhubung ke " + target_unc;
+        return true;
+    }
+
+    auto try_connect = [&](const std::string& local_drv, const std::string& unc, bool with_creds) -> DWORD {
+        NETRESOURCEA nr = {};
+        nr.dwType = RESOURCETYPE_DISK;
+        nr.lpLocalName = local_drv.empty() ? NULL : const_cast<LPSTR>(local_drv.c_str());
+        nr.lpRemoteName = const_cast<LPSTR>(unc.c_str());
+        nr.lpProvider = NULL;
+
+        LPCSTR passPtr = (with_creds && !share_user.empty()) ? share_pass.c_str() : NULL;
+        LPCSTR userPtr = (with_creds && !share_user.empty()) ? share_user.c_str() : NULL;
+        return WNetAddConnection2A(&nr, passPtr, userPtr, 0);
+    };
+
+    DWORD rc = try_connect(drv, target_unc, !using_vbox);
+    if (rc == ERROR_ALREADY_ASSIGNED || rc == ERROR_DEVICE_ALREADY_REMEMBERED) {
+        WNetCancelConnection2A(drv.c_str(), 0, TRUE);
+        rc = try_connect(drv, target_unc, !using_vbox);
+    } else if (rc == ERROR_SESSION_CREDENTIAL_CONFLICT) {
+        WNetCancelConnection2A(target_unc.c_str(), 0, TRUE);
+        rc = try_connect(drv, target_unc, !using_vbox);
+    }
+
+    if (rc == NO_ERROR && dir_exists_win(drv_root)) {
+        out_mount_root = drv_root;
+        out_status_msg = "Drive " + drv + " terhubung ke " + target_unc;
+        return true;
+    }
+
+    if (using_vbox && dir_exists_win(vbox_unc)) {
+        out_mount_root = ensure_trailing_backslash(vbox_unc);
+        out_status_msg = "Terhubung via VirtualBox Shared Folder (" + vbox_unc + ")";
+        return true;
+    }
+
+    if (rc == 53 || rc == 67) {
+        out_status_msg = "Share '" + share_name + "' belum aktif di Server (jalankan BAGIKAN_DISK_GAME_SERVER.bat sbg Admin)";
+    } else if (rc == 5 || rc == 86 || rc == 1272 || rc == 1326) {
+        out_status_msg = "Butuh User/Pass SMB Read-Only di Dashboard Kasir (kebijakan SMB Win 11, err " + std::to_string(rc) + ")";
+    } else {
+        out_status_msg = "Gagal mount " + target_unc + " (Windows error " + std::to_string(rc) + ")";
+    }
+    return false;
+}
+
+void ensure_server_game_drives_mounted(bool force = false) {
+    if (g_mounting_drive.exchange(true)) return;
+    g_last_mount_attempt_tick = GetTickCount64();
+
+    GameShareConfig cfg;
+    std::string host;
+    {
+        std::lock_guard<std::mutex> lock(g_state.mtx);
+        cfg = g_state.game_share;
+        host = g_state.server_host;
+    }
+
+    bool pri_ok = false;
+    std::string pri_root;
+    std::string pri_msg;
+    bool ext_ok = false;
+    std::string ext_root;
+    std::string ext_msg;
+
+    if (!is_remote_host(host)) {
+        pri_ok = dir_exists_win(cfg.source_path);
+        pri_root = ensure_trailing_backslash(cfg.source_path);
+        ext_ok = dir_exists_win(cfg.extra_source_path);
+        ext_root = ensure_trailing_backslash(cfg.extra_source_path);
+        pri_msg = pri_ok ? ("Server Lokal Aktif (" + pri_root + ")") : ("Folder Server " + cfg.source_path + " tidak ditemukan");
+    } else if (!cfg.enabled) {
+        pri_msg = "Auto-Mount Game Disk dinonaktifkan oleh Kasir";
+    } else {
+        pri_ok = mount_single_share(
+            cfg.client_drive, cfg.share_unc, cfg.vbox_unc, cfg.share_name,
+            cfg.share_user, cfg.share_pass, "", pri_root, pri_msg
+        );
+        if (!cfg.extra_share_name.empty() && !cfg.extra_share_unc.empty()) {
+            std::string exclude_drv = (pri_ok && pri_root.size() >= 2 && pri_root[1] == ':') ? pri_root.substr(0, 2) : "";
+            ext_ok = mount_single_share(
+                cfg.extra_drive, cfg.extra_share_unc, cfg.extra_vbox_unc, cfg.extra_share_name,
+                cfg.share_user, cfg.share_pass, exclude_drv, ext_root, ext_msg
+            );
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_state.mtx);
+        g_state.game_share.primary_mounted = pri_ok;
+        g_state.game_share.primary_mount_root = pri_root;
+        g_state.game_share.extra_mounted = ext_ok;
+        g_state.game_share.extra_mount_root = ext_root;
+        g_state.game_share.status_text = pri_msg;
+    }
+
+    if (force) {
+        show_toast(pri_ok ? ("Drive Game Server siap: " + pri_msg) : pri_msg, 4000);
+    }
+    if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
+    g_mounting_drive = false;
+}
+
+std::string resolve_server_path(const std::string& raw_path) {
+    std::string clean = normalize_slashes(raw_path);
+    if (clean.empty()) return "";
+    if (path_exists_win(clean)) return clean;
+
+    GameShareConfig cfg;
+    {
+        std::lock_guard<std::mutex> lock(g_state.mtx);
+        cfg = g_state.game_share;
+    }
+
+    auto try_remap = [&](const std::string& src_prefix, const std::string& dst_root) -> std::string {
+        if (src_prefix.empty() || dst_root.empty()) return "";
+        std::string norm_src = ensure_trailing_backslash(src_prefix);
+        std::string norm_dst = ensure_trailing_backslash(dst_root);
+        if (starts_with_ci(clean, norm_src)) {
+            std::string cand = norm_dst + clean.substr(norm_src.size());
+            if (path_exists_win(cand)) return cand;
+        }
+        return "";
+    };
+
+    if (cfg.primary_mounted) {
+        std::string hit = try_remap(cfg.source_path, cfg.primary_mount_root);
+        if (!hit.empty()) return hit;
+    }
+    if (cfg.extra_mounted) {
+        std::string hit = try_remap(cfg.extra_source_path, cfg.extra_mount_root);
+        if (!hit.empty()) return hit;
+    }
+
+    // Fallback langsung UNC apabila Windows gagal alokasi huruf drive
+    std::string hit = try_remap(cfg.source_path, cfg.vbox_unc);
+    if (!hit.empty()) return hit;
+    hit = try_remap(cfg.source_path, cfg.share_unc);
+    if (!hit.empty()) return hit;
+    hit = try_remap(cfg.extra_source_path, cfg.extra_vbox_unc);
+    if (!hit.empty()) return hit;
+    hit = try_remap(cfg.extra_source_path, cfg.extra_share_unc);
+    if (!hit.empty()) return hit;
+
+    // Fallback khusus untuk game yang discan dari sub-folder C:\Game\X (jika salinan juga ada di share utama)
+    if (cfg.primary_mounted && clean.size() > 3 && clean[1] == ':' && clean[2] == '\\') {
+        size_t second_slash = clean.find('\\', 3);
+        if (second_slash != std::string::npos) {
+            std::string sub_rel = clean.substr(second_slash + 1);
+            std::string cand = ensure_trailing_backslash(cfg.primary_mount_root) + sub_rel;
+            if (path_exists_win(cand)) return cand;
+        }
+    }
+
+    return "";
+}
+
+std::string find_best_game_exe_in_dir(const std::string& folder, const std::string& game_name, int depth = 0) {
+    if (folder.empty() || !dir_exists_win(folder)) return "";
+    std::string dir = ensure_trailing_backslash(folder);
+    WIN32_FIND_DATAA fd = {};
+    HANDLE hFind = FindFirstFileA((dir + "*").c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return "";
+
+    std::string target_norm = normalize_alnum_lower(game_name);
+    std::string best_path = "";
+    long long best_score = -1;
+    std::vector<std::string> subdirs;
+
+    do {
+        std::string fname = fd.cFileName;
+        if (fname == "." || fname == "..") continue;
+        std::string lower = to_lower_ascii(fname);
+
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (depth == 0) {
+                if (lower == "engine" || lower == "_commonredist" || lower == "directx" ||
+                    lower == "redist" || lower == "crashreporter" || lower.find("data") != std::string::npos) {
+                    continue;
+                }
+                subdirs.push_back(dir + fname);
+            }
+            continue;
+        }
+
+        bool is_exe = (lower.size() > 4 && lower.rfind(".exe") == lower.size() - 4);
+        bool is_bat = (lower.size() > 4 && lower.rfind(".bat") == lower.size() - 4);
+        if (!is_exe && !is_bat) continue;
+
+        if (lower.find("unitycrashhandler") != std::string::npos ||
+            lower.find("crashreport") != std::string::npos ||
+            lower.find("unins") != std::string::npos ||
+            lower.find("setup") != std::string::npos ||
+            lower.find("redist") != std::string::npos ||
+            lower.find("dxsetup") != std::string::npos ||
+            lower.find("prereq") != std::string::npos ||
+            lower.find("webview2") != std::string::npos ||
+            lower.find("battleye") != std::string::npos ||
+            lower.find("_be.exe") != std::string::npos ||
+            lower.find("easyanticheat") != std::string::npos) {
+            continue;
+        }
+
+        std::string stem_norm = normalize_alnum_lower(fname.substr(0, fname.size() - 4));
+        long long score = is_exe ? 200 : 100;
+        if (depth == 0) score += 150;
+        if (!target_norm.empty() && !stem_norm.empty()) {
+            if (stem_norm == target_norm) score += 2000;
+            else if (stem_norm.find(target_norm) != std::string::npos || target_norm.find(stem_norm) != std::string::npos) score += 1000;
+        }
+        unsigned long long file_kb = (((unsigned long long)fd.nFileSizeHigh << 32) | fd.nFileSizeLow) / 1024;
+        score += (long long)(std::min)(file_kb, 50000ULL) / 256;
+
+        if (score > best_score) {
+            best_score = score;
+            best_path = dir + fname;
+        }
+    } while (FindNextFileA(hFind, &fd));
+
+    FindClose(hFind);
+
+    if (depth == 0 && (best_path.empty() || best_score < 1000)) {
+        for (const auto& sub : subdirs) {
+            std::string sub_best = find_best_game_exe_in_dir(sub, game_name, 1);
+            if (!sub_best.empty()) {
+                if (best_path.empty()) best_path = sub_best;
+                else {
+                    size_t p = sub_best.find_last_of('\\');
+                    std::string sub_stem = normalize_alnum_lower((p != std::string::npos) ? sub_best.substr(p + 1) : sub_best);
+                    if (!target_norm.empty() && sub_stem.find(target_norm) != std::string::npos) {
+                        best_path = sub_best;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    return best_path;
+}
+
 HINSTANCE execute_game_command(const std::string& command, const std::string& args) {
     std::string workDir = "";
     if (command.find("://") == std::string::npos) {
@@ -282,9 +648,11 @@ bool is_uri_scheme_registered(const std::string& uri) {
 
 void launch_game(int game_id) {
     GameItem target;
+    GameShareConfig share_cfg;
     bool found = false;
     {
         std::lock_guard<std::mutex> lock(g_state.mtx);
+        share_cfg = g_state.game_share;
         for (const auto& g : g_state.server_games) {
             if (g.id == game_id) {
                 target = g;
@@ -295,44 +663,97 @@ void launch_game(int game_id) {
     }
     if (!found) return;
 
+    std::string final_cmd = "";
+    std::string final_args = target.args;
+    bool from_server_share = false;
+
     if (target.command.find("://") != std::string::npos) {
-        if (!is_uri_scheme_registered(target.command)) {
-            std::string scheme = target.command.substr(0, target.command.find("://"));
-            show_toast("Launcher '" + scheme + "' belum terpasang di PC/VM ini! Install launcher atau hubungkan Diskless.", 4500);
-            return;
+        if (is_uri_scheme_registered(target.command)) {
+            final_cmd = target.command;
+        } else {
+            // Client PC/VM belum punya Steam URI: coba jalankan executable game langsung di Drive Server
+            std::string resolved_dir = resolve_server_path(target.install_path);
+            if (!resolved_dir.empty()) {
+                final_cmd = find_best_game_exe_in_dir(resolved_dir, target.name);
+                if (!final_cmd.empty()) {
+                    final_args = "";
+                    from_server_share = true;
+                }
+            }
+            if (final_cmd.empty()) {
+                if (!share_cfg.primary_mounted) {
+                    std::thread([]() { ensure_server_game_drives_mounted(false); }).detach();
+                    show_toast("Drive Server belum termount (" + share_cfg.status_text + "). Menghubungkan ulang...", 5000);
+                } else {
+                    std::string scheme = target.command.substr(0, target.command.find("://"));
+                    show_toast("Game '" + target.name + "' butuh launcher '" + scheme + "' terpasang di PC/VM ini.", 4500);
+                }
+                return;
+            }
         }
     } else if (target.command.find('\\') != std::string::npos ||
                target.command.find('/') != std::string::npos ||
                target.command.find(':') != std::string::npos) {
-        if (GetFileAttributesA(target.command.c_str()) == INVALID_FILE_ATTRIBUTES) {
-            show_toast("File game tidak ditemukan di PC/VM ini (" + target.name + "). Hubungkan Drive Diskless!", 4500);
+        final_cmd = resolve_server_path(target.command);
+        if (final_cmd.empty() && !target.install_path.empty()) {
+            std::string resolved_dir = resolve_server_path(target.install_path);
+            if (!resolved_dir.empty()) {
+                final_cmd = find_best_game_exe_in_dir(resolved_dir, target.name);
+            }
+        }
+        if (final_cmd.empty()) {
+            if (!share_cfg.primary_mounted) {
+                std::thread([]() { ensure_server_game_drives_mounted(false); }).detach();
+                show_toast("Drive Server belum terhubung (" + share_cfg.status_text + "). Sedang menghubungkan...", 5000);
+            } else {
+                show_toast("File " + target.name + " tidak ditemukan di Drive Server (" + share_cfg.primary_mount_root + ") maupun lokal.", 4500);
+            }
             return;
         }
+        from_server_share = (!path_exists_win(target.command));
+    } else {
+        final_cmd = target.command;
     }
 
-    HINSTANCE res = execute_game_command(target.command, target.args);
+    HINSTANCE res = execute_game_command(final_cmd, final_args);
     if ((INT_PTR)res <= 32) {
-        show_toast("Gagal meluncurkan " + target.name + ". Periksa path di Dashboard Kasir.", 4000);
+        show_toast("Gagal meluncurkan " + target.name + " (" + final_cmd + "). Periksa path di Kasir.", 4500);
     } else {
-        show_toast("Meluncurkan " + target.name + "... Client beralih ke Bilah Mini.");
+        show_toast(from_server_share
+            ? ("Menjalankan " + target.name + " dari Drive Game Server...")
+            : ("Meluncurkan " + target.name + "... Client beralih ke Bilah Mini."));
         apply_window_mode(MODE_UNLOCKED_MINIBAR);
     }
 }
 
 void open_game_folder() {
-    DWORD attrD = GetFileAttributesA("D:\\Games");
-    if (attrD != INVALID_FILE_ATTRIBUTES && (attrD & FILE_ATTRIBUTE_DIRECTORY)) {
-        ShellExecuteA(NULL, "open", "D:\\Games", NULL, NULL, SW_SHOWNORMAL);
-    } else {
-        DWORD attrDriveD = GetFileAttributesA("D:\\");
-        if (attrDriveD != INVALID_FILE_ATTRIBUTES && (attrDriveD & FILE_ATTRIBUTE_DIRECTORY)) {
-            ShellExecuteA(NULL, "open", "D:\\", NULL, NULL, SW_SHOWNORMAL);
-        } else {
-            ShellExecuteA(NULL, "open", "explorer.exe", NULL, NULL, SW_SHOWNORMAL);
-        }
+    GameShareConfig cfg;
+    {
+        std::lock_guard<std::mutex> lock(g_state.mtx);
+        cfg = g_state.game_share;
     }
-    apply_window_mode(MODE_UNLOCKED_MINIBAR);
-    show_toast("Membuka direktori game... Client beralih ke Bilah Mini.");
+
+    std::string target_dir = "";
+    if (cfg.primary_mounted && !cfg.primary_mount_root.empty() && dir_exists_win(cfg.primary_mount_root)) {
+        target_dir = cfg.primary_mount_root;
+    } else if (dir_exists_win("D:\\Games")) {
+        target_dir = "D:\\Games";
+    } else if (dir_exists_win(cfg.source_path)) {
+        target_dir = cfg.source_path;
+    } else if (!cfg.vbox_unc.empty() && dir_exists_win(cfg.vbox_unc)) {
+        target_dir = cfg.vbox_unc;
+    } else if (!cfg.share_unc.empty() && dir_exists_win(cfg.share_unc)) {
+        target_dir = cfg.share_unc;
+    }
+
+    if (!target_dir.empty()) {
+        ShellExecuteA(NULL, "open", target_dir.c_str(), NULL, NULL, SW_SHOWNORMAL);
+        apply_window_mode(MODE_UNLOCKED_MINIBAR);
+        show_toast("Membuka Drive Game Server (" + target_dir + ")...");
+    } else {
+        std::thread([]() { ensure_server_game_drives_mounted(true); }).detach();
+        show_toast("Drive Game Server belum terhubung. Mencoba mount otomatis...", 4000);
+    }
 }
 
 // -------------------------------------------------------------
@@ -517,7 +938,22 @@ void borrow_vault_account(int game_id) {
             g_active_vault_user = accUser;
             g_active_vault_game = target.name;
             show_toast("Berhasil meminjam akun " + target.name + " (" + accUser + ")! Meluncurkan game...");
-            execute_game_command(target.command, target.args);
+            std::string run_cmd = target.command;
+            std::string run_args = target.args;
+            if (run_cmd.find("://") != std::string::npos) {
+                if (!is_uri_scheme_registered(run_cmd)) {
+                    std::string rdir = resolve_server_path(target.install_path);
+                    std::string rexe = rdir.empty() ? "" : find_best_game_exe_in_dir(rdir, target.name);
+                    if (!rexe.empty()) {
+                        run_cmd = rexe;
+                        run_args = "";
+                    }
+                }
+            } else {
+                std::string resolved = resolve_server_path(run_cmd);
+                if (!resolved.empty()) run_cmd = resolved;
+            }
+            execute_game_command(run_cmd, run_args);
             if (g_hwnd) PostMessage(g_hwnd, WM_APP_APPLY_WINDOW_MODE, MODE_UNLOCKED_MINIBAR, 0);
         } else {
             std::string msg = root["message"].as_str("");
@@ -545,59 +981,111 @@ void sync_catalog_from_server() {
     JsonValue root = JsonParser::parse(res.body);
     if (root.type != JsonValue::OBJECT) return;
 
-    std::lock_guard<std::mutex> lock(g_state.mtx);
+    bool should_auto_mount = false;
+    {
+        std::lock_guard<std::mutex> lock(g_state.mtx);
 
-    // Parse packages
-    if (root.has("packages") && root["packages"].type == JsonValue::ARRAY) {
-        g_state.packages.clear();
-        for (const auto& item : root["packages"].arr_val) {
-            BillingPackage pkg;
-            pkg.id = (int)item["id"].as_int();
-            pkg.name = item["name"].as_str();
-            pkg.duration_minutes = (int)item["duration_minutes"].as_int();
-            pkg.price = item["price"].as_int();
-            pkg.pc_type = item["pc_type"].as_str("all");
-            pkg.description = item["description"].as_str();
-            g_state.packages.push_back(pkg);
+        // Parse packages
+        if (root.has("packages") && root["packages"].type == JsonValue::ARRAY) {
+            g_state.packages.clear();
+            for (const auto& item : root["packages"].arr_val) {
+                BillingPackage pkg;
+                pkg.id = (int)item["id"].as_int();
+                pkg.name = item["name"].as_str();
+                pkg.duration_minutes = (int)item["duration_minutes"].as_int();
+                pkg.price = item["price"].as_int();
+                pkg.pc_type = item["pc_type"].as_str("all");
+                pkg.description = item["description"].as_str();
+                g_state.packages.push_back(pkg);
+            }
+        }
+
+        // Parse menu items while preserving current cart quantities
+        if (root.has("menus") && root["menus"].type == JsonValue::ARRAY) {
+            std::map<int, int> old_cart;
+            for (const auto& m : g_state.menu_items) {
+                if (m.cart_qty > 0) old_cart[m.id] = m.cart_qty;
+            }
+            g_state.menu_items.clear();
+            for (const auto& item : root["menus"].arr_val) {
+                MenuItem m;
+                m.id = (int)item["id"].as_int();
+                m.name = item["name"].as_str();
+                m.category = item["category"].as_str();
+                m.price = item["price"].as_int();
+                m.stock = (int)item["stock"].as_int();
+                if (old_cart.count(m.id)) m.cart_qty = old_cart[m.id];
+                g_state.menu_items.push_back(m);
+            }
+        }
+
+        // Parse real games from Server Diskless / Steam / Local Scanner
+        if (root.has("games") && root["games"].type == JsonValue::ARRAY) {
+            g_state.server_games.clear();
+            for (const auto& item : root["games"].arr_val) {
+                GameItem gm;
+                gm.id = (int)item["id"].as_int();
+                gm.name = item["name"].as_str();
+                gm.category = item["category"].as_str("PC GAME");
+                gm.publisher = item["publisher"].as_str("Server Local");
+                gm.source_type = item["source_type"].as_str("");
+                gm.command = item["launch_command"].as_str();
+                gm.args = item["launch_args"].as_str("");
+                gm.install_path = item["install_path"].as_str("");
+                gm.size_formatted = item["size_formatted"].as_str("");
+                gm.min_tier = item["min_tier"].as_str("reguler");
+                gm.is_vault_game = item["is_vault_game"].as_bool(false);
+                g_state.server_games.push_back(gm);
+            }
+            g_state.diskless_total_games = std::to_string(g_state.server_games.size()) + " Game Terdeteksi di Server";
+        }
+
+        // Parse Network Game Share configuration from Server
+        JsonValue gs;
+        if (root.has("game_share") && root["game_share"].type == JsonValue::OBJECT) {
+            gs = root["game_share"];
+        } else if (root.has("diskless") && root["diskless"].type == JsonValue::OBJECT &&
+                   root["diskless"].has("game_share") && root["diskless"]["game_share"].type == JsonValue::OBJECT) {
+            gs = root["diskless"]["game_share"];
+        }
+        if (gs.type == JsonValue::OBJECT) {
+            std::string old_unc = g_state.game_share.share_unc;
+            std::string old_drv = g_state.game_share.client_drive;
+            std::string old_usr = g_state.game_share.share_user;
+            std::string old_pwd = g_state.game_share.share_pass;
+
+            g_state.game_share.enabled = gs["enabled"].as_bool(true);
+            g_state.game_share.source_path = gs["source_path"].as_str("D:\\");
+            g_state.game_share.share_name = gs["share_name"].as_str("UkikuraGames");
+            g_state.game_share.share_unc = gs["share_unc"].as_str("");
+            g_state.game_share.vbox_unc = gs["vbox_unc"].as_str("\\\\VBoxSvr\\UkikuraGames");
+            g_state.game_share.client_drive = gs["client_drive"].as_str("G:");
+            g_state.game_share.share_user = gs["share_user"].as_str("");
+            g_state.game_share.share_pass = gs["share_pass"].as_str("");
+            g_state.game_share.extra_source_path = gs["extra_source_path"].as_str("C:\\Games");
+            g_state.game_share.extra_share_name = gs["extra_share_name"].as_str("UkikuraCGames");
+            g_state.game_share.extra_share_unc = gs["extra_share_unc"].as_str("");
+            g_state.game_share.extra_vbox_unc = gs["extra_vbox_unc"].as_str("\\\\VBoxSvr\\UkikuraCGames");
+            g_state.game_share.extra_drive = gs["extra_drive"].as_str("H:");
+
+            bool cfg_changed = (old_unc != g_state.game_share.share_unc ||
+                                old_drv != g_state.game_share.client_drive ||
+                                old_usr != g_state.game_share.share_user ||
+                                old_pwd != g_state.game_share.share_pass);
+            if (cfg_changed) {
+                g_state.game_share.primary_mounted = false;
+                g_state.game_share.extra_mounted = false;
+            }
+            if (g_state.game_share.enabled) {
+                if (cfg_changed || (!g_state.game_share.primary_mounted && (GetTickCount64() - g_last_mount_attempt_tick > 30000ULL))) {
+                    should_auto_mount = true;
+                }
+            }
         }
     }
 
-    // Parse menu items while preserving current cart quantities
-    if (root.has("menus") && root["menus"].type == JsonValue::ARRAY) {
-        std::map<int, int> old_cart;
-        for (const auto& m : g_state.menu_items) {
-            if (m.cart_qty > 0) old_cart[m.id] = m.cart_qty;
-        }
-        g_state.menu_items.clear();
-        for (const auto& item : root["menus"].arr_val) {
-            MenuItem m;
-            m.id = (int)item["id"].as_int();
-            m.name = item["name"].as_str();
-            m.category = item["category"].as_str();
-            m.price = item["price"].as_int();
-            m.stock = (int)item["stock"].as_int();
-            if (old_cart.count(m.id)) m.cart_qty = old_cart[m.id];
-            g_state.menu_items.push_back(m);
-        }
-    }
-
-    // Parse real games from Server Diskless / Steam / Local Scanner
-    if (root.has("games") && root["games"].type == JsonValue::ARRAY) {
-        g_state.server_games.clear();
-        for (const auto& item : root["games"].arr_val) {
-            GameItem gm;
-            gm.id = (int)item["id"].as_int();
-            gm.name = item["name"].as_str();
-            gm.category = item["category"].as_str("PC GAME");
-            gm.publisher = item["publisher"].as_str("Server Local");
-            gm.command = item["launch_command"].as_str();
-            gm.args = item["launch_args"].as_str("");
-            gm.size_formatted = item["size_formatted"].as_str("");
-            gm.min_tier = item["min_tier"].as_str("reguler");
-            gm.is_vault_game = item["is_vault_game"].as_bool(false);
-            g_state.server_games.push_back(gm);
-        }
-        g_state.diskless_total_games = std::to_string(g_state.server_games.size()) + " Game Terdeteksi di Server";
+    if (should_auto_mount) {
+        std::thread([]() { ensure_server_game_drives_mounted(false); }).detach();
     }
 }
 
@@ -1459,15 +1947,17 @@ void render_ui(HDC hdc, int width, int height) {
             // -------------------------------------------------
             std::string cur_tier = "reguler";
             std::string total_games_lbl = "Memuat katalog...";
+            GameShareConfig share_copy;
             std::vector<GameItem> server_games_copy;
             {
                 std::lock_guard<std::mutex> lock(g_state.mtx);
                 cur_tier = g_state.pc_type;
                 total_games_lbl = g_state.diskless_total_games;
+                share_copy = g_state.game_share;
                 server_games_copy = g_state.server_games;
             }
 
-            int act_w = (cw < 780) ? 148 : 172;
+            int act_w = (cw < 780) ? 148 : 178;
             int act_gap = 8;
             int title_w = (std::max)(180, cw - (act_w * 2 + act_gap + 12));
 
@@ -1478,18 +1968,38 @@ void render_ui(HDC hdc, int width, int height) {
             // Quick actions
             draw_button(g, cx + cw - (act_w * 2 + act_gap), cy, act_w, 34, "Desktop Windows",
                         Color(255, 51, 65, 85), Color(255, 255, 255, 255), "minimize_to_bar", 0, 8, 11.0f);
-            draw_button(g, cx + cw - act_w, cy, act_w, 34, "Buka Drive D:\\Games",
-                        Color(255, 30, 41, 59), Color(255, 56, 189, 248), "open_game_folder", 0, 8, 11.0f);
+            std::string drv_label = "Hubungkan Drive Server";
+            std::string drv_action = "connect_game_drive";
+            Color drv_bg = Color(255, 146, 64, 14);
+            Color drv_fg = Color(255, 254, 243, 199);
+            if (share_copy.primary_mounted) {
+                std::string rootLbl = share_copy.primary_mount_root;
+                if (rootLbl.size() >= 2 && rootLbl[1] == ':') rootLbl = rootLbl.substr(0, 2);
+                drv_label = "Buka Drive " + rootLbl;
+                drv_action = "open_game_folder";
+                drv_bg = Color(255, 30, 41, 59);
+                drv_fg = Color(255, 56, 189, 248);
+            }
+            draw_button(g, cx + cw - act_w, cy, act_w, 34, drv_label,
+                        drv_bg, drv_fg, drv_action, 0, 8, 11.0f);
 
             // Diskless Server & Vault status banner
             SolidBrush disklessBg(Color(255, 15, 23, 42));
             fill_round_rect(g, &disklessBg, cx, cy + 54, cw, 34, 8);
             draw_round_rect(g, &borderPen, cx, cy + 54, cw, 34, 8);
-            std::string disklessText = "SERVER DISKLESS / LOKAL: " + total_games_lbl + " | Sinkronisasi Otomatis Katalog dari Kasir Server";
+            std::string disklessText;
+            Color disklessFg;
             if (!g_active_vault_user.empty()) {
                 disklessText = "LISENSI STEAM SHARING AKTIF: " + g_active_vault_game + " (" + g_active_vault_user + ") | Bebas Main Game AAA Resmi!";
+                disklessFg = Color(255, 251, 191, 36);
+            } else if (share_copy.primary_mounted) {
+                disklessText = "SERVER GAME DISK TERHUBUNG (" + share_copy.status_text + ") | Siap Main Langsung dari Data Server";
+                disklessFg = Color(255, 52, 211, 153);
+            } else {
+                disklessText = "GAME DISK SERVER BELUM TERHUBUNG: " + share_copy.status_text;
+                disklessFg = Color(255, 251, 191, 36);
             }
-            draw_text(g, disklessText, cx + 14, cy + 54, cw - 28, 34, 10.5f, !g_active_vault_user.empty() ? Color(255, 251, 191, 36) : Color(255, 34, 211, 238), FontStyleBold, StringAlignmentNear);
+            draw_text(g, disklessText, cx + 14, cy + 54, cw - 28, 34, 10.5f, disklessFg, FontStyleBold, StringAlignmentNear);
 
             // Filter Buttons Row
             int f_btn_y = cy + 96;
@@ -2100,6 +2610,10 @@ void handle_click(int x, int y) {
             else if (act == "game_page_prev") { if (g_game_page > 0) g_game_page--; }
             else if (act == "game_page_next") { g_game_page++; }
             else if (act == "open_game_folder") { open_game_folder(); }
+            else if (act == "connect_game_drive") {
+                show_toast("Menghubungkan Drive Game Server...");
+                std::thread([]() { ensure_server_game_drives_mounted(true); }).detach();
+            }
             else if (act == "cfg_exit_app") {
                 if (g_cfg_operator_pin != g_operator_pin) {
                     g_focused_input = 13;

@@ -38,11 +38,36 @@ struct GameItem {
     std::string name;
     std::string category;
     std::string publisher;
+    std::string source_type;
     std::string command;
     std::string args;
+    std::string install_path;
     std::string size_formatted;
     std::string min_tier = "reguler"; // "reguler", "vip", "vip++"
     bool is_vault_game = false;
+};
+
+struct GameShareConfig {
+    bool enabled = true;
+    std::string source_path = "D:\\";
+    std::string share_name = "UkikuraGames";
+    std::string share_unc = "";
+    std::string vbox_unc = "\\\\VBoxSvr\\UkikuraGames";
+    std::string client_drive = "G:";
+    std::string share_user = "";
+    std::string share_pass = "";
+
+    std::string extra_source_path = "C:\\Games";
+    std::string extra_share_name = "UkikuraCGames";
+    std::string extra_share_unc = "";
+    std::string extra_vbox_unc = "\\\\VBoxSvr\\UkikuraCGames";
+    std::string extra_drive = "H:";
+
+    bool primary_mounted = false;
+    std::string primary_mount_root = "";
+    bool extra_mounted = false;
+    std::string extra_mount_root = "";
+    std::string status_text = "Menghubungkan Drive Game Server...";
 };
 
 struct ClientState {
@@ -56,6 +81,7 @@ struct ClientState {
     long long hourly_rate = 5000;
     std::string specs = "";
     std::string diskless_total_games = "Memuat katalog server...";
+    GameShareConfig game_share;
 
     // Connection & Session
     bool server_online = false;

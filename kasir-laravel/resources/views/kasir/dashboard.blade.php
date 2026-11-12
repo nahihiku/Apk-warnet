@@ -1752,6 +1752,95 @@
                         <span class="text-[11px] text-gray-400 mono">Sinkronisasi real-time ke Client C++</span>
                     </div>
 
+                    <!-- Network Game Disk Auto-Mount (Server -> Client) -->
+                    <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 shadow-sm space-y-4">
+                        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100">
+                                        Network Game Disk (Auto-Mount ke PC Client / VM)
+                                    </h3>
+                                    @if(!empty($shareStatus['primary_active']))
+                                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-green-500/15 text-green-500">SHARE AKTIF ({{ $gameShareConfig['share_name'] }})</span>
+                                    @else
+                                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-500">BELUM DIBAGIKAN DI WINDOWS SERVER</span>
+                                    @endif
+                                </div>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    Client otomatis me-mount drive server via jaringan (<code>{{ $gameShareConfig['share_unc'] }}</code> &rarr; <code>{{ $gameShareConfig['client_drive'] }}</code>) dan langsung menjalankan game dari data server saat tombol MAINKAN ditekan.
+                                </p>
+                            </div>
+                            <a href="{{ route('download.share_server') }}"
+                               class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold whitespace-nowrap text-center">
+                                Download BAGIKAN_DISK_GAME_SERVER.bat (Admin)
+                            </a>
+                        </div>
+
+                        <form action="{{ route('kasir.diskless.config') }}" method="POST" class="grid grid-cols-1 md:grid-cols-4 gap-3 pt-2 border-t border-gray-100 dark:border-gray-800">
+                            @csrf
+                            <input type="hidden" name="share_config_submitted" value="1">
+                            <div>
+                                <label class="block text-[11px] font-medium text-gray-400 mb-1">Folder Game Utama Server</label>
+                                <input type="text" name="share_source_path" value="{{ $gameShareConfig['source_path'] }}" placeholder="D:\"
+                                       class="w-full px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-800 dark:text-gray-200 mono">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium text-gray-400 mb-1">Nama Share Utama</label>
+                                <input type="text" name="share_name" value="{{ $gameShareConfig['share_name'] }}" placeholder="UkikuraGames"
+                                       class="w-full px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-800 dark:text-gray-200 mono">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium text-gray-400 mb-1">Drive Target di Client / VM</label>
+                                <input type="text" name="client_drive" value="{{ $gameShareConfig['client_drive'] }}" placeholder="G:"
+                                       class="w-full px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-800 dark:text-gray-200 mono">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium text-gray-400 mb-1">UNC Manual (Kosong = Otomatis IP Kasir)</label>
+                                <input type="text" name="share_unc" value="{{ $gameShareConfig['custom_unc'] }}" placeholder="{{ $gameShareConfig['share_unc'] }}"
+                                       class="w-full px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-800 dark:text-gray-200 mono">
+                            </div>
+
+                            <div>
+                                <label class="block text-[11px] font-medium text-gray-400 mb-1">Folder Tambahan Server (C:\Games)</label>
+                                <input type="text" name="extra_source_path" value="{{ $gameShareConfig['extra_source_path'] }}" placeholder="C:\Games"
+                                       class="w-full px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-800 dark:text-gray-200 mono">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium text-gray-400 mb-1">Nama Share Tambahan</label>
+                                <input type="text" name="extra_share_name" value="{{ $gameShareConfig['extra_share_name'] }}" placeholder="UkikuraCGames"
+                                       class="w-full px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-800 dark:text-gray-200 mono">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium text-gray-400 mb-1">Drive Tambahan di Client</label>
+                                <input type="text" name="extra_client_drive" value="{{ $gameShareConfig['extra_drive'] }}" placeholder="H:"
+                                       class="w-full px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-800 dark:text-gray-200 mono">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium text-gray-400 mb-1">Status Auto-Mount Client</label>
+                                <select name="share_enabled" class="w-full px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-800 dark:text-gray-200">
+                                    <option value="1" {{ $gameShareConfig['enabled'] ? 'selected' : '' }}>Aktif (Mount Otomatis saat Client Jalan)</option>
+                                    <option value="0" {{ !$gameShareConfig['enabled'] ? 'selected' : '' }}>Nonaktif</option>
+                                </select>
+                            </div>
+
+                            <div class="md:col-span-2">
+                                <label class="block text-[11px] font-medium text-gray-400 mb-1">Username SMB Read-Only (Opsional, misal UkikuraClient)</label>
+                                <input type="text" name="share_user" value="{{ $gameShareConfig['share_user'] }}" placeholder="UkikuraClient (atau kosong untuk guest/VBoxSvr)"
+                                       class="w-full px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-800 dark:text-gray-200 mono">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium text-gray-400 mb-1">Password SMB</label>
+                                <input type="password" name="share_pass" value="{{ $gameShareConfig['share_pass'] }}" placeholder="Password akun SMB"
+                                       class="w-full px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-800 dark:text-gray-200 mono">
+                            </div>
+                            <div class="flex items-end">
+                                <button type="submit" class="w-full py-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition">
+                                    Simpan Game Disk Server
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+
                     <!-- Bagian Katalog Game Asli Server (Auto-Scan Disk & Steam) -->
                     <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 shadow-sm space-y-6">
                         <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">

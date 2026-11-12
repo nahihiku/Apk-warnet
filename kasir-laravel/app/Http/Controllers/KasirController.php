@@ -60,6 +60,11 @@ class KasirController extends Controller
 
         $vaultAccounts = GameVaultAccount::orderBy('game_title')->get();
         $disklessConfigs = DisklessServerConfig::all()->pluck('value', 'key');
+        $gameShareConfig = DisklessServerConfig::getGameShareConfig(request()->getHost());
+        $shareStatus = DisklessServerConfig::detectWindowsShareStatus(
+            $gameShareConfig['share_name'],
+            $gameShareConfig['extra_share_name']
+        );
         $serverGames = ServerGame::orderByRaw("CASE min_tier WHEN 'reguler' THEN 1 WHEN 'vip' THEN 2 WHEN 'vip++' THEN 3 ELSE 4 END")
             ->orderBy('name')
             ->get();
@@ -82,6 +87,8 @@ class KasirController extends Controller
             'readyOrders',
             'vaultAccounts',
             'disklessConfigs',
+            'gameShareConfig',
+            'shareStatus',
             'serverGames'
         ));
     }
@@ -769,6 +776,41 @@ class KasirController extends Controller
         }
         if ($request->filled('network_speed')) {
             DisklessServerConfig::updateOrCreate(['key' => 'network_speed'], ['value' => trim($request->input('network_speed'))]);
+        }
+
+        if ($request->has('share_config_submitted')) {
+            DisklessServerConfig::updateOrCreate(
+                ['key' => 'share_enabled'],
+                ['value' => $request->input('share_enabled') === '1' ? '1' : '0']
+            );
+            $sourcePath = DisklessServerConfig::normalizeWindowsPath((string) $request->input('share_source_path', ''), 'D:\\');
+            DisklessServerConfig::updateOrCreate(['key' => 'share_source_path'], ['value' => $sourcePath]);
+
+            $shareName = trim((string) $request->input('share_name', '')) ?: 'UkikuraGames';
+            DisklessServerConfig::updateOrCreate(['key' => 'share_name'], ['value' => $shareName]);
+
+            $clientDrive = DisklessServerConfig::normalizeDriveLetter($request->input('client_drive'), 'G:');
+            DisklessServerConfig::updateOrCreate(['key' => 'client_drive'], ['value' => $clientDrive]);
+
+            DisklessServerConfig::updateOrCreate(['key' => 'share_unc'], ['value' => trim((string) $request->input('share_unc', ''))]);
+            DisklessServerConfig::updateOrCreate(['key' => 'share_user'], ['value' => trim((string) $request->input('share_user', ''))]);
+            DisklessServerConfig::updateOrCreate(['key' => 'share_pass'], ['value' => (string) $request->input('share_pass', '')]);
+
+            $extraSource = DisklessServerConfig::normalizeWindowsPath((string) $request->input('extra_source_path', ''), 'C:\\Games');
+            DisklessServerConfig::updateOrCreate(['key' => 'extra_source_path'], ['value' => $extraSource]);
+
+            $extraShare = trim((string) $request->input('extra_share_name', '')) ?: 'UkikuraCGames';
+            DisklessServerConfig::updateOrCreate(['key' => 'extra_share_name'], ['value' => $extraShare]);
+
+            $extraDrive = DisklessServerConfig::normalizeDriveLetter($request->input('extra_client_drive'), 'H:');
+            DisklessServerConfig::updateOrCreate(['key' => 'extra_client_drive'], ['value' => $extraDrive]);
+
+            DisklessServerConfig::updateOrCreate(
+                ['key' => 'last_update_log'],
+                ['value' => "Game Share diperbarui: {$shareName} ({$sourcePath}) -> Drive {$clientDrive} pada semua Client PC."]
+            );
+
+            return back()->with('success', "Pengaturan Network Game Disk ({$shareName} -> {$clientDrive}) disimpan! Client akan auto-mount saat sinkronisasi.");
         }
 
         return back()->with('success', 'Konfigurasi hardware Server Diskless berhasil diperbarui.');
