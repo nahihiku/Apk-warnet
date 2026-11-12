@@ -7,6 +7,7 @@
 
 #include <windows.h>
 #include <windowsx.h>
+#include <shellapi.h>
 #include <gdiplus.h>
 #include <string>
 #include <vector>
@@ -20,12 +21,130 @@
 #include "json_mini.hpp"
 #include "network.hpp"
 
+#define WM_APP_APPLY_WINDOW_MODE (WM_USER + 101)
+
 using namespace Gdiplus;
+
+// Window and Kiosk Modes
+enum ClientWindowMode {
+    MODE_LOCKED_FULLSCREEN = 0,
+    MODE_UNLOCKED_DASHBOARD = 1,
+    MODE_UNLOCKED_MINIBAR = 2
+};
+ClientWindowMode g_window_mode = MODE_LOCKED_FULLSCREEN;
+
+// Global Keyboard Hook for Kiosk Mode
+HHOOK g_kbd_hook = nullptr;
+std::atomic<bool> g_kiosk_block_keys{true};
+
+LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode == HC_ACTION && g_kiosk_block_keys.load()) {
+        KBDLLHOOKSTRUCT* pKey = (KBDLLHOOKSTRUCT*)lParam;
+        bool isAlt = (pKey->flags & LLKHF_ALTDOWN) != 0;
+
+        // Block Windows Keys (LWIN, RWIN)
+        if (pKey->vkCode == VK_LWIN || pKey->vkCode == VK_RWIN) {
+            return 1;
+        }
+        // Block Alt+Tab
+        if (isAlt && pKey->vkCode == VK_TAB) {
+            return 1;
+        }
+        // Block Alt+Escape
+        if (isAlt && pKey->vkCode == VK_ESCAPE) {
+            return 1;
+        }
+        // Block Ctrl+Escape (Opens Start Menu)
+        if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) && pKey->vkCode == VK_ESCAPE) {
+            return 1;
+        }
+        // Block Alt+F4
+        if (isAlt && pKey->vkCode == VK_F4) {
+            return 1;
+        }
+        // Block Context Menu Key
+        if (pKey->vkCode == VK_APPS) {
+            return 1;
+        }
+    }
+    return CallNextHookEx(g_kbd_hook, nCode, wParam, lParam);
+}
+
+void set_taskbar_visible(bool show) {
+    HWND hTaskbar = FindWindow(L"Shell_TrayWnd", NULL);
+    if (hTaskbar) {
+        ShowWindow(hTaskbar, show ? SW_SHOW : SW_HIDE);
+        EnableWindow(hTaskbar, show ? TRUE : FALSE);
+    }
+    HWND hSecondaryTaskbar = FindWindow(L"Shell_SecondaryTrayWnd", NULL);
+    if (hSecondaryTaskbar) {
+        ShowWindow(hSecondaryTaskbar, show ? SW_SHOW : SW_HIDE);
+    }
+}
 
 // Global Application State
 ClientState g_state;
 std::atomic<bool> g_running{true};
 HWND g_hwnd = nullptr;
+
+// Game Launcher Items
+struct GameItem {
+    int id;
+    std::string name;
+    std::string category;
+    std::string publisher;
+    std::string command;
+};
+
+std::vector<GameItem> g_popular_games = {
+    { 1, "Valorant", "ESPORTS FPS", "Riot Games", "riotclient://launch/valorant" },
+    { 2, "Point Blank", "ESPORTS FPS", "Zepetto Indonesia", "PointBlank.exe" },
+    { 3, "Counter-Strike 2", "ESPORTS FPS", "Valve / Steam", "steam://rungameid/730" },
+    { 4, "Dota 2", "MOBA STRATEGY", "Valve / Steam", "steam://rungameid/570" },
+    { 5, "Mobile Legends (Emulator)", "MOBILE ESPORTS", "LDPlayer / Emulator", "LDPlayer9.exe" },
+    { 6, "Grand Theft Auto V", "OPEN WORLD / ACTION", "Rockstar Games", "steam://rungameid/271590" },
+    { 7, "Roblox Player", "SANDBOX / ADVENTURE", "Roblox Corporation", "roblox://" },
+    { 8, "Genshin Impact", "OPEN WORLD RPG", "HoYoverse", "GenshinImpact.exe" },
+    { 9, "PUBG: Battlegrounds", "BATTLE ROYALE", "Krafton", "steam://rungameid/578080" },
+    { 10, "Steam Client", "GAME PLATFORM", "Valve Corporation", "steam://open/main" },
+    { 11, "Epic Games Launcher", "GAME PLATFORM", "Epic Games", "com.epicgames.launcher://" },
+    { 12, "Discord", "VOICE & CHAT", "Discord Inc.", "discord://" }
+};
+
+void apply_window_mode(ClientWindowMode mode) {
+    if (!g_hwnd) return;
+    g_window_mode = mode;
+    int sw = GetSystemMetrics(SM_CXSCREEN);
+    int sh = GetSystemMetrics(SM_CYSCREEN);
+
+    if (mode == MODE_LOCKED_FULLSCREEN) {
+        g_kiosk_block_keys = true;
+        set_taskbar_visible(false);
+        SetWindowLong(g_hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, sw, sh, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    } else if (mode == MODE_UNLOCKED_DASHBOARD) {
+        g_kiosk_block_keys = false;
+        set_taskbar_visible(true);
+        SetWindowLong(g_hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+        int ww = 1180;
+        int wh = 740;
+        int wx = (sw - ww) / 2;
+        int wy = (sh - wh) / 2;
+        if (wx < 0) wx = 0;
+        if (wy < 0) wy = 0;
+        SetWindowPos(g_hwnd, HWND_NOTOPMOST, wx, wy, ww, wh, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    } else if (mode == MODE_UNLOCKED_MINIBAR) {
+        g_kiosk_block_keys = false;
+        set_taskbar_visible(true);
+        SetWindowLong(g_hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        int mw = 430;
+        int mh = 50;
+        int mx = sw - mw - 20;
+        int my = 10;
+        SetWindowPos(g_hwnd, HWND_TOPMOST, mx, my, mw, mh, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
+    InvalidateRect(g_hwnd, nullptr, FALSE);
+}
 
 // UI State
 int g_active_tab = 0; // 0: Billing, 1: Food Menu, 2: Kitchen Queue, 3: Settings
@@ -97,6 +216,37 @@ std::string format_timer(int total_seconds) {
         << std::setfill('0') << std::setw(2) << m << ":"
         << std::setfill('0') << std::setw(2) << s;
     return oss.str();
+}
+
+void launch_game(int game_id) {
+    for (const auto& g : g_popular_games) {
+        if (g.id == game_id) {
+            HINSTANCE res = ShellExecuteA(NULL, "open", g.command.c_str(), NULL, NULL, SW_SHOWNORMAL);
+            if ((INT_PTR)res <= 32) {
+                show_toast("Meluncurkan " + g.name + "... Buka shortcut desktop jika game belum terpasang.");
+            } else {
+                show_toast("Meluncurkan " + g.name + "... Client beralih ke Bilah Mini.");
+            }
+            apply_window_mode(MODE_UNLOCKED_MINIBAR);
+            return;
+        }
+    }
+}
+
+void open_game_folder() {
+    DWORD attrD = GetFileAttributesA("D:\\Games");
+    if (attrD != INVALID_FILE_ATTRIBUTES && (attrD & FILE_ATTRIBUTE_DIRECTORY)) {
+        ShellExecuteA(NULL, "open", "D:\\Games", NULL, NULL, SW_SHOWNORMAL);
+    } else {
+        DWORD attrDriveD = GetFileAttributesA("D:\\");
+        if (attrDriveD != INVALID_FILE_ATTRIBUTES && (attrDriveD & FILE_ATTRIBUTE_DIRECTORY)) {
+            ShellExecuteA(NULL, "open", "D:\\", NULL, NULL, SW_SHOWNORMAL);
+        } else {
+            ShellExecuteA(NULL, "open", "explorer.exe", NULL, NULL, SW_SHOWNORMAL);
+        }
+    }
+    apply_window_mode(MODE_UNLOCKED_MINIBAR);
+    show_toast("Membuka direktori game... Client beralih ke Bilah Mini.");
 }
 
 // Network Sync Functions
@@ -228,6 +378,13 @@ void sync_heartbeat() {
 
         if (was_locked != g_state.is_locked) {
             trigger_repaint = true;
+            if (g_hwnd) {
+                if (g_state.is_locked) {
+                    PostMessage(g_hwnd, WM_APP_APPLY_WINDOW_MODE, MODE_LOCKED_FULLSCREEN, 0);
+                } else {
+                    PostMessage(g_hwnd, WM_APP_APPLY_WINDOW_MODE, MODE_UNLOCKED_DASHBOARD, 0);
+                }
+            }
         }
     }
 
@@ -364,7 +521,9 @@ void perform_login() {
                 g_state.active_orders.clear();
                 for (auto& m : g_state.menu_items) m.cart_qty = 0;
                 g_input_password = "";
+                g_state.is_locked = false;
             }
+            if (g_hwnd) PostMessage(g_hwnd, WM_APP_APPLY_WINDOW_MODE, MODE_UNLOCKED_DASHBOARD, 0);
             show_toast("Login berhasil! Selamat bermain di " + pc_code);
             sync_catalog_from_server();
             sync_heartbeat();
@@ -392,6 +551,7 @@ void perform_logout() {
         g_state.remaining_seconds = 0;
         g_state.is_locked = true;
     }
+    if (g_hwnd) PostMessage(g_hwnd, WM_APP_APPLY_WINDOW_MODE, MODE_LOCKED_FULLSCREEN, 0);
 
     std::thread([host, port, pc_code]() {
         std::string body = "{\"pc_code\":\"" + json_escape(pc_code) + "\"}";
@@ -495,7 +655,7 @@ void perform_order_food(const std::string& payment_method) {
             }
             if (payment_method != "qris") {
                 show_toast("Pesanan berhasil dikirim ke Antrian Dapur!", 4000);
-                g_active_tab = 2; // Switch to Kitchen Queue tab
+                g_active_tab = 3; // Switch to Kitchen Queue tab
             }
             sync_catalog_from_server();
             sync_heartbeat();
@@ -707,6 +867,30 @@ void render_ui(HDC hdc, int width, int height) {
         tierDesc = "Ultimate Monster Rig • 360Hz Display + Sofa Gaming";
     }
 
+    // Mini Floating Game Bar Mode (when user minimizes to play games or use desktop)
+    if (!is_locked && g_window_mode == MODE_UNLOCKED_MINIBAR) {
+        SolidBrush barBg(Color(250, 15, 23, 42));
+        Pen barBorder(Color(255, 6, 182, 212), 1.5f);
+        fill_round_rect(g, &barBg, 0, 0, width, height, 8);
+        draw_round_rect(g, &barBorder, 0, 0, width - 1, height - 1, 8);
+
+        // Station & Timer on left
+        draw_text(g, pc_code + " [" + tierTitle + "]", 14, 6, 135, 18, 10.5f, tierCol, FontStyleBold);
+        draw_text(g, format_timer(remaining_seconds), 14, 23, 135, 22, 15.0f, Color(255, 52, 211, 153), FontStyleBold);
+
+        // Expand button
+        draw_button(g, 155, 9, 165, 32, "Buka Menu / Makanan",
+                    Color(255, 6, 182, 212), Color(255, 15, 23, 42), "expand_dashboard", 0, 6, 11.5f);
+
+        // Logout button
+        draw_button(g, 330, 9, 90, 32, "Logout",
+                    Color(255, 220, 38, 38), Color(255, 255, 255, 255), "do_logout", 0, 6, 11.5f);
+
+        Graphics screenG(hdc);
+        screenG.DrawImage(&buffer, 0, 0);
+        return;
+    }
+
     if (is_locked) {
         // =====================================================
         // MODE 1: LOCK SCREEN (UKIKURA NATIVE iCAFE LOCKSCREEN)
@@ -873,6 +1057,10 @@ void render_ui(HDC hdc, int width, int height) {
         draw_text(g, format_timer(remaining_seconds), 650, 36, 185, 28, 20.0f,
                   low_time ? Color(255, 248, 113, 113) : Color(255, 224, 231, 255), FontStyleBold);
 
+        // Minimize to Mini Bar / Game Mode Button
+        draw_button(g, width - 365, 21, 185, 42, "Bilah Mini / Desktop",
+                    Color(255, 51, 65, 85), Color(255, 255, 255, 255), "minimize_to_bar", 0, 8, 12.0f);
+
         // Logout / Lock Button
         draw_button(g, width - 165, 21, 140, 42, "LOGOUT / SELESAI",
                     Color(255, 220, 38, 38), Color(255, 255, 255, 255), "do_logout", 0, 8, 12.0f);
@@ -885,10 +1073,11 @@ void render_ui(HDC hdc, int width, int height) {
 
         struct NavItem { int idx; std::string label; std::string badge; };
         std::vector<NavItem> navs = {
-            { 0, "Tambah Billing", "" },
-            { 1, "Pesan Makanan", "" },
-            { 2, "Antrian Dapur", std::to_string(active_orders.size()) },
-            { 3, "Pengaturan PC", "" }
+            { 0, "Menu Game", "" },
+            { 1, "Tambah Billing", "" },
+            { 2, "Pesan Makanan", "" },
+            { 3, "Antrian Dapur", std::to_string(active_orders.size()) },
+            { 4, "Pengaturan PC", "" }
         };
 
         int nav_y = 105;
@@ -926,7 +1115,53 @@ void render_ui(HDC hdc, int width, int height) {
 
         if (g_active_tab == 0) {
             // -------------------------------------------------
-            // TAB 0: TAMBAH BILLING (PAKET WAKTU)
+            // TAB 0: KATALOG GAME & LAUNCHER (WARNET GAME MENU)
+            // -------------------------------------------------
+            draw_text(g, "KATALOG & PELUNCUR GAME WARNET", cx, cy, cw - 380, 28, 20.0f, Color(255, 248, 250, 252), FontStyleBold);
+            draw_text(g, "Pilih game untuk langsung bermain di PC ini. Client otomatis mengecil ke Bilah Mini.",
+                      cx, cy + 30, cw - 380, 22, 12.5f, Color(255, 148, 163, 184));
+
+            // Quick actions
+            draw_button(g, cx + cw - 360, cy, 170, 36, "Buka Desktop Windows",
+                        Color(255, 51, 65, 85), Color(255, 255, 255, 255), "minimize_to_bar", 0, 8, 11.5f);
+            draw_button(g, cx + cw - 180, cy, 180, 36, "Buka Explorer Game",
+                        Color(255, 30, 41, 59), Color(255, 56, 189, 248), "open_game_folder", 0, 8, 11.5f);
+
+            int cols = 3;
+            int gap = 14;
+            int card_w = (cw - gap * (cols - 1)) / cols;
+            int card_h = 105;
+            int start_y = cy + 64;
+
+            for (size_t i = 0; i < g_popular_games.size(); ++i) {
+                const auto& gm = g_popular_games[i];
+                int r = (int)i / cols;
+                int c = (int)i % cols;
+                int gx = cx + c * (card_w + gap);
+                int gy = start_y + r * (card_h + gap);
+                if (gy + card_h > height - 15) break;
+
+                SolidBrush gCardBg(Color(220, 30, 41, 59));
+                fill_round_rect(g, &gCardBg, gx, gy, card_w, card_h, 12);
+                draw_round_rect(g, &borderPen, gx, gy, card_w, card_h, 12);
+
+                // Category pill
+                SolidBrush catBg(Color(45, 6, 182, 212));
+                fill_round_rect(g, &catBg, gx + 16, gy + 12, 120, 20, 4);
+                draw_text(g, gm.category, gx + 16, gy + 12, 120, 20, 9.5f, Color(255, 34, 211, 238), FontStyleBold, StringAlignmentCenter);
+
+                // Game Name & Publisher
+                draw_text(g, gm.name, gx + 16, gy + 36, card_w - 32, 24, 14.5f, Color(255, 248, 250, 252), FontStyleBold);
+                draw_text(g, gm.publisher, gx + 16, gy + 62, card_w - 145, 20, 11.0f, Color(255, 148, 163, 184));
+
+                // Launch Button
+                draw_button(g, gx + card_w - 130, gy + 58, 116, 34, "LUNCURKAN",
+                            Color(255, 16, 185, 129), Color(255, 15, 23, 42), "launch_game", gm.id, 6, 11.5f);
+            }
+
+        } else if (g_active_tab == 1) {
+            // -------------------------------------------------
+            // TAB 1: TAMBAH BILLING (PAKET WAKTU)
             // -------------------------------------------------
             draw_text(g, "TAMBAH WAKTU BILLING LANGSUNG DARI PC", cx, cy, cw, 30, 20.0f, Color(255, 248, 250, 252), FontStyleBold);
             draw_text(g, "Pilih paket billing di bawah. Anda bisa membayar langsung menggunakan Saldo Member (otomatis aktif) atau Scan QRIS.",
@@ -988,9 +1223,9 @@ void render_ui(HDC hdc, int width, int height) {
                 draw_button(g, px + 28 + btn_w, py + 142, btn_w, 38, "Bayar QRIS",
                             Color(255, 99, 102, 241), Color(255, 255, 255, 255), "buy_pkg_qris", pkg.id, 8, 12.0f);
             }
-        } else if (g_active_tab == 1) {
+        } else if (g_active_tab == 2) {
             // -------------------------------------------------
-            // TAB 1: PESAN MAKANAN & MINUMAN (F&B CAFE)
+            // TAB 2: PESAN MAKANAN & MINUMAN (F&B CAFE)
             // -------------------------------------------------
             int cart_w = 310;
             int menu_w = cw - cart_w - 20;
@@ -1104,9 +1339,9 @@ void render_ui(HDC hdc, int width, int height) {
             draw_button(g, rx + 18, bot_y + 152, cart_w - 36, 36, "PESAN — BAYAR PAKAI QRIS",
                         Color(255, 99, 102, 241), Color(255, 255, 255, 255), "order_food_qris", 0, 8, 12.0f);
 
-        } else if (g_active_tab == 2) {
+        } else if (g_active_tab == 3) {
             // -------------------------------------------------
-            // TAB 2: STATUS PESANAN & ANTRIAN DAPUR LIVE
+            // TAB 3: STATUS PESANAN & ANTRIAN DAPUR LIVE
             // -------------------------------------------------
             draw_text(g, "STATUS PESANAN & ANTRIAN DAPUR (LIVE TRACKING)", cx, cy, cw, 30, 19.0f, Color(255, 248, 250, 252), FontStyleBold);
             draw_text(g, "Pantau langsung apakah makanan/minuman Anda sedang dimasak di dapur atau sudah siap diantar ke meja PC Anda.",
@@ -1159,9 +1394,9 @@ void render_ui(HDC hdc, int width, int height) {
 
                 oy += 110;
             }
-        } else if (g_active_tab == 3) {
+        } else if (g_active_tab == 4) {
             // -------------------------------------------------
-            // TAB 3: PENGATURAN TERMINAL PC
+            // TAB 4: PENGATURAN TERMINAL PC
             // -------------------------------------------------
             draw_text(g, "INFORMASI & PENGATURAN TERMINAL CLIENT", cx, cy, cw, 30, 19.0f, Color(255, 248, 250, 252), FontStyleBold);
             SolidBrush cardBg(Color(220, 30, 41, 59));
@@ -1260,6 +1495,7 @@ void render_ui(HDC hdc, int width, int height) {
 
         draw_text(g, "PENGATURAN STASIUN TERMINAL PC", mx + 24, my + 20, mw - 48, 26, 17.0f, Color(255, 248, 250, 252), FontStyleBold, StringAlignmentCenter);
         draw_text(g, "Tersimpan di client_config.ini • Khusus Teknisi / Operator Warnet", mx + 24, my + 46, mw - 48, 20, 11.5f, Color(255, 148, 163, 184), FontStyleRegular, StringAlignmentCenter);
+        draw_button(g, mx + mw - 140, my + 18, 105, 28, "KELUAR APP", Color(255, 220, 38, 38), Color(255, 255, 255, 255), "cfg_exit_app", 0, 6, 10.5f);
 
         SolidBrush inBg(Color(255, 15, 23, 42));
         Pen activePen(Color(255, 6, 182, 212), 1.5f);
@@ -1368,6 +1604,11 @@ void handle_click(int x, int y) {
             }
             else if (act == "do_login") { perform_login(); }
             else if (act == "do_logout") { perform_logout(); }
+            else if (act == "minimize_to_bar") { apply_window_mode(MODE_UNLOCKED_MINIBAR); }
+            else if (act == "expand_dashboard") { apply_window_mode(MODE_UNLOCKED_DASHBOARD); }
+            else if (act == "launch_game") { launch_game(id); }
+            else if (act == "open_game_folder") { open_game_folder(); }
+            else if (act == "cfg_exit_app") { DestroyWindow(g_hwnd); }
             else if (act == "switch_tab") { g_active_tab = id; g_focused_input = 0; }
             else if (act == "open_config_modal") { open_config_modal(); }
             else if (act == "cfg_close") { close_config_modal(); }
@@ -1441,6 +1682,10 @@ void toggle_fullscreen(HWND hwnd) {
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
+        case WM_APP_APPLY_WINDOW_MODE:
+            apply_window_mode((ClientWindowMode)wParam);
+            return 0;
+
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hwnd, &ps);
@@ -1456,6 +1701,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             int x = GET_X_LPARAM(lParam);
             int y = GET_Y_LPARAM(lParam);
             handle_click(x, y);
+            if (g_window_mode == MODE_UNLOCKED_MINIBAR && x < 340) {
+                ReleaseCapture();
+                SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            }
             return 0;
         }
         case WM_KEYDOWN: {
@@ -1531,6 +1780,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         case WM_DESTROY:
+            set_taskbar_visible(true);
+            if (g_kbd_hook) {
+                UnhookWindowsHookEx(g_kbd_hook);
+                g_kbd_hook = nullptr;
+            }
             g_running = false;
             PostQuitMessage(0);
             return 0;
@@ -1556,6 +1810,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     ULONG_PTR gdiplusToken;
     GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, nullptr);
 
+    // Install Low-Level Keyboard Hook
+    g_kbd_hook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(NULL), 0);
+
     WNDCLASSEX wc = {};
     wc.cbSize = sizeof(WNDCLASSEX);
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -1565,14 +1822,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     wc.lpszClassName = L"UkikuraWarnetClientClass";
     RegisterClassEx(&wc);
 
+    int sw = GetSystemMetrics(SM_CXSCREEN);
+    int sh = GetSystemMetrics(SM_CYSCREEN);
+
     g_hwnd = CreateWindowEx(
-        0,
+        WS_EX_TOPMOST,
         L"UkikuraWarnetClientClass",
         L"Ukikura iCafe Native Client (C++) - Billing & Food Order",
-        WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-        80, 50, 1180, 740,
+        WS_POPUP | WS_VISIBLE,
+        0, 0, sw, sh,
         nullptr, nullptr, hInstance, nullptr
     );
+
+    // Initial window mode: locked kiosk fullscreen
+    apply_window_mode(MODE_LOCKED_FULLSCREEN);
 
     ShowWindow(g_hwnd, nCmdShow);
     UpdateWindow(g_hwnd);
@@ -1603,6 +1866,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
 
     g_running = false;
     if (poller.joinable()) poller.join();
+    if (g_kbd_hook) {
+        UnhookWindowsHookEx(g_kbd_hook);
+        g_kbd_hook = nullptr;
+    }
+    set_taskbar_visible(true);
     GdiplusShutdown(gdiplusToken);
     return 0;
 }
