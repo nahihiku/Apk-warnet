@@ -1,16 +1,16 @@
 @echo off
 setlocal enabledelayedexpansion
-title INSTALLER & AUTO SETUP CLIENT WARNET UKIKURA ICAFE
+title INSTALLER ^& AUTO SETUP CLIENT WARNET UKIKURA ICAFE
 
 echo =====================================================================
-echo       INSTALLER & AUTO-SETUP UKIKURA ICAFE CLIENT C++
+echo       INSTALLER ^& AUTO-SETUP UKIKURA ICAFE CLIENT C++
 echo =====================================================================
 echo Skrip ini akan melakukan instalasi dan konfigurasi otomatis:
 echo  1. Konfigurasi Nomor Terminal PC dan Alamat IP Server Kasir
 echo  2. Pendaftaran Startup Otomatis Windows (Auto-start on Boot)
 echo  3. Pengaturan Pengecualian Windows Firewall (LAN Communication)
 echo  4. Pembuatan Shortcut Desktop
-echo  5. Penguncian Kiosk Layar Penuh (Menutup Taskbar & Tombol Windows)
+echo  5. Penguncian Kiosk Layar Penuh (Menutup Taskbar ^& Tombol Windows)
 echo =====================================================================
 echo.
 
@@ -57,7 +57,7 @@ if exist "%CONFIG_FILE%" (
 )
 
 echo ---------------------------------------------------------------------
-echo PENGATURAN IDENTITAS TERMINAL PC & SERVER KASIR
+echo PENGATURAN IDENTITAS TERMINAL PC ^& SERVER KASIR
 echo ---------------------------------------------------------------------
 if /i "%~1"=="/silent" (
     set USER_PC=%DEFAULT_PC%
@@ -120,7 +120,7 @@ echo.
 
 :: 6. Konfirmasi Selesai & Peluncuran
 echo =====================================================================
-echo INSTALASI & SETUP CLIENT SELESAI DENGAN SUKSES!
+echo INSTALASI ^& SETUP CLIENT SELESAI DENGAN SUKSES!
 echo.
 echo Catatan Keamanan Client Warnet:
 echo  - Mode Terkunci: Layar penuh borderless (Topmost), taskbar disembunyikan.

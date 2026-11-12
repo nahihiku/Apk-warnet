@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-title UNINSTALLER & REMOVE AUTORUN CLIENT WARNET UKIKURA ICAFE
+title UNINSTALLER ^& REMOVE AUTORUN CLIENT WARNET UKIKURA ICAFE
 
 echo =====================================================================
 echo       UNINSTALLER UKIKURA ICAFE CLIENT C++

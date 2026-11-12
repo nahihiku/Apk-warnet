@@ -101,6 +101,7 @@ $pcCode = '__PC_CODE__'
 $installDir = 'C:\UkikuraClient'
 
 Write-Host '=== UKIKURA iCAFE VM / CLIENT SETUP ===' -ForegroundColor Cyan
+Stop-Process -Name WarnetClient -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 
 Write-Host "[1/4] Mengunduh WarnetClient.exe dari $baseUrl ..."
