@@ -10,6 +10,8 @@ use App\Models\FoodMenu;
 use App\Models\Order;
 use App\Models\GameVaultAccount;
 use App\Models\DisklessServerConfig;
+use App\Models\ServerGame;
+use App\Services\ServerGameScanner;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -52,8 +54,15 @@ class KasirController extends Controller
             ->orderBy('id')
             ->get();
 
+        if (ServerGame::count() === 0) {
+            ServerGameScanner::scan();
+        }
+
         $vaultAccounts = GameVaultAccount::orderBy('game_title')->get();
         $disklessConfigs = DisklessServerConfig::all()->pluck('value', 'key');
+        $serverGames = ServerGame::orderByRaw("CASE min_tier WHEN 'reguler' THEN 1 WHEN 'vip' THEN 2 WHEN 'vip++' THEN 3 ELSE 4 END")
+            ->orderBy('name')
+            ->get();
 
         return view('kasir.dashboard', compact(
             'pcs',
@@ -72,7 +81,8 @@ class KasirController extends Controller
             'cookingOrders',
             'readyOrders',
             'vaultAccounts',
-            'disklessConfigs'
+            'disklessConfigs',
+            'serverGames'
         ));
     }
 
@@ -675,5 +685,80 @@ class KasirController extends Controller
         ]);
 
         return back()->with('success', "Lisensi Akun $title ($accUser) berhasil dikembalikan ke status Tersedia.");
+    }
+
+    public function scanServerGames(Request $request)
+    {
+        if ($request->filled('scan_paths')) {
+            DisklessServerConfig::updateOrCreate(
+                ['key' => 'scan_paths'],
+                ['value' => trim($request->input('scan_paths'))]
+            );
+        }
+
+        $res = ServerGameScanner::scan(true);
+        return back()->with('success', "Scan Game Server selesai: {$res['total']} game terpasang ({$res['total_gb']} GB). Baru: {$res['added']}, Diperbarui: {$res['updated']}, Dihapus: {$res['removed']}.");
+    }
+
+    public function updateServerGame(Request $request, ServerGame $game)
+    {
+        $request->validate([
+            'min_tier' => 'required|in:reguler,vip,vip++',
+            'category' => 'nullable|string|max:50',
+        ]);
+
+        $game->update([
+            'min_tier' => $request->input('min_tier'),
+            'category' => strtoupper($request->input('category') ?: $game->category),
+            'is_vault_game' => $request->input('is_vault_game') == '1',
+            'is_visible' => $request->input('is_visible') == '1',
+        ]);
+
+        $totalVisible = ServerGame::where('is_visible', true)->count();
+        $totalBytes = (int) ServerGame::where('is_visible', true)->sum('size_bytes');
+        $totalGb = number_format($totalBytes / 1073741824, 1);
+        DisklessServerConfig::updateOrCreate(['key' => 'total_games'], ['value' => "{$totalVisible} Game Terdeteksi ({$totalGb} GB)"]);
+
+        return back()->with('success', "Pengaturan game {$game->name} berhasil diperbarui.");
+    }
+
+    public function storeCustomServerGame(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:120',
+            'launch_command' => 'required|string',
+            'min_tier' => 'required|in:reguler,vip,vip++',
+        ]);
+
+        ServerGame::create([
+            'name' => $request->input('name'),
+            'category' => strtoupper($request->input('category') ?: 'CUSTOM GAME'),
+            'publisher' => $request->input('publisher') ?: 'Custom Server Path',
+            'source_type' => 'custom',
+            'external_id' => 'custom_' . uniqid(),
+            'launch_command' => $request->input('launch_command'),
+            'launch_args' => $request->input('launch_args'),
+            'install_path' => dirname($request->input('launch_command')),
+            'size_bytes' => 0,
+            'min_tier' => $request->input('min_tier'),
+            'is_vault_game' => $request->input('is_vault_game') == '1',
+            'is_visible' => true,
+        ]);
+
+        $totalVisible = ServerGame::where('is_visible', true)->count();
+        DisklessServerConfig::updateOrCreate(['key' => 'total_games'], ['value' => "{$totalVisible} Game Terdeteksi"]);
+
+        return back()->with('success', "Game manual '{$request->input('name')}' berhasil ditambahkan ke katalog client.");
+    }
+
+    public function destroyServerGame(ServerGame $game)
+    {
+        $name = $game->name;
+        $game->delete();
+
+        $totalVisible = ServerGame::where('is_visible', true)->count();
+        DisklessServerConfig::updateOrCreate(['key' => 'total_games'], ['value' => "{$totalVisible} Game Terdeteksi"]);
+
+        return back()->with('success', "Game '{$name}' berhasil dihapus dari katalog.");
     }
 }

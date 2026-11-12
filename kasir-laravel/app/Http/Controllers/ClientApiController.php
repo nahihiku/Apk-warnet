@@ -11,6 +11,8 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\GameVaultAccount;
 use App\Models\DisklessServerConfig;
+use App\Models\ServerGame;
+use App\Services\ServerGameScanner;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -49,6 +51,15 @@ class ClientApiController extends Controller
             ->orderBy('game_title')
             ->get();
 
+        if (ServerGame::count() === 0) {
+            ServerGameScanner::scan();
+        }
+
+        $games = ServerGame::where('is_visible', true)
+            ->orderByRaw("CASE min_tier WHEN 'reguler' THEN 1 WHEN 'vip' THEN 2 WHEN 'vip++' THEN 3 ELSE 4 END")
+            ->orderBy('name')
+            ->get();
+
         return response()->json([
             'success' => true,
             'pc_type' => $pcType,
@@ -58,6 +69,7 @@ class ClientApiController extends Controller
             'menus' => $menus,
             'diskless' => $disklessInfo,
             'game_vault' => $vaultAccounts,
+            'games' => $games,
         ]);
     }
 
@@ -239,16 +251,19 @@ class ClientApiController extends Controller
             ], 403);
         }
 
-        // Cari akun yang tersedia untuk game ini
-        $account = GameVaultAccount::where('game_title', $gameTitle)
-            ->where('status', 'available')
-            ->first();
+        // Cari akun yang tersedia untuk game ini (exact maupun kecocokan judul)
+        $lowerReq = strtolower($gameTitle);
+        $account = GameVaultAccount::where('status', 'available')->get()->first(function ($acc) use ($lowerReq) {
+            $accLower = strtolower($acc->game_title);
+            return $accLower === $lowerReq || str_contains($accLower, $lowerReq) || str_contains($lowerReq, $accLower);
+        });
 
         if (!$account) {
             // Cek apakah PC ini sendiri yang sedang meminjam akun ini
-            $existing = GameVaultAccount::where('game_title', $gameTitle)
-                ->where('borrowed_by_pc', $pcCode)
-                ->first();
+            $existing = GameVaultAccount::where('borrowed_by_pc', $pcCode)->get()->first(function ($acc) use ($lowerReq) {
+                $accLower = strtolower($acc->game_title);
+                return $accLower === $lowerReq || str_contains($accLower, $lowerReq) || str_contains($lowerReq, $accLower);
+            });
             if ($existing) {
                 return response()->json([
                     'success' => true,

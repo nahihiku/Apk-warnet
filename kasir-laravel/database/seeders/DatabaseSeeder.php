@@ -171,6 +171,13 @@ class DatabaseSeeder extends Seeder
                 'status' => 'available',
             ],
             [
+                'game_title' => 'Grand Theft Auto V Legacy',
+                'platform' => 'steam',
+                'account_username' => 'ukikura_gtav_01',
+                'account_token' => 'VAULT_TOKEN_GTAV_5521',
+                'status' => 'available',
+            ],
+            [
                 'game_title' => 'Microsoft PC Game Pass Ultimate',
                 'platform' => 'gamepass',
                 'account_username' => 'ukikura_gamepass_vip',
@@ -191,12 +198,16 @@ class DatabaseSeeder extends Seeder
             ['key' => 'master_drive', 'value' => '4TB NVMe PCIe Gen4 Enterprise (Drive D: Games)'],
             ['key' => 'network_speed', 'value' => '2.5GbE Full-Duplex Switch 16-Port'],
             ['key' => 'superuser_mode', 'value' => 'STANDBY'], // STANDBY, UPDATING, ACTIVE
-            ['key' => 'total_games', 'value' => '48 Game Terpasang'],
-            ['key' => 'last_update_log', 'value' => 'Patch Valorant v9.08 & Genshin Impact v5.2 sukses tersinkron ke 15 PC.'],
+            ['key' => 'scan_paths', 'value' => \App\Services\ServerGameScanner::getDefaultScanPaths()],
+            ['key' => 'total_games', 'value' => '0 Game Terpasang'],
+            ['key' => 'last_update_log', 'value' => 'Menunggu hasil scan diskless server...'],
         ];
 
         foreach ($disklessConfigs as $cfg) {
             DisklessServerConfig::updateOrCreate(['key' => $cfg['key']], $cfg);
         }
+
+        // 7. Scan Game Asli yang Terinstal di Server
+        \App\Services\ServerGameScanner::scan();
     }
 }

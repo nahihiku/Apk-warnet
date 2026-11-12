@@ -87,51 +87,7 @@ void set_taskbar_visible(bool show) {
 ClientState g_state;
 std::atomic<bool> g_running{true};
 HWND g_hwnd = nullptr;
-
-// Game Launcher Items (Sesuai Pembagian Kelas PC & Lisensi Sharing)
-struct GameItem {
-    int id;
-    std::string name;
-    std::string category;
-    std::string publisher;
-    std::string command;
-    std::string min_tier; // "reguler", "vip", "vip++"
-    bool is_vault_game;   // true for AAA games requiring warnet shared account
-};
-
-std::vector<GameItem> g_popular_games = {
-    // KELAS REGULER (F2P Esports & Kasual - PC-01 s/d PC-07)
-    { 1, "Valorant", "F2P ESPORTS FPS", "Riot Games", "riotclient://launch/valorant", "reguler", false },
-    { 2, "Counter-Strike 2", "F2P ESPORTS FPS", "Valve / Steam", "steam://rungameid/730", "reguler", false },
-    { 3, "Point Blank", "F2P ESPORTS FPS", "Zepetto Indonesia", "PointBlank.exe", "reguler", false },
-    { 4, "Dota 2", "F2P MOBA STRATEGY", "Valve / Steam", "steam://rungameid/570", "reguler", false },
-    { 5, "Roblox Player", "F2P SANDBOX", "Roblox Corporation", "roblox://", "reguler", false },
-    { 6, "Lost Saga Origin", "F2P ACTION BRAWLER", "Gravity Game Link", "LostSaga.exe", "reguler", false },
-    { 7, "Mobile Legends (Emulator)", "MOBILE ESPORTS", "LDPlayer 9", "LDPlayer9.exe", "reguler", false },
-
-    // KELAS VIP (Battle Royale, Open World & PC Game Pass - PC-08 s/d PC-12)
-    { 8, "PUBG: Battlegrounds", "BATTLE ROYALE", "Krafton", "steam://rungameid/578080", "vip", false },
-    { 9, "Apex Legends", "BATTLE ROYALE HERO", "EA / Respawn", "steam://rungameid/1172470", "vip", false },
-    { 10, "Genshin Impact", "OPEN WORLD RPG", "HoYoverse", "GenshinImpact.exe", "vip", false },
-    { 11, "Wuthering Waves", "OPEN WORLD ACTION", "Kuro Games", "WutheringWaves.exe", "vip", false },
-    { 12, "Zenless Zone Zero", "URBAN ACTION RPG", "HoYoverse", "ZenlessZoneZero.exe", "vip", false },
-    { 13, "Grand Theft Auto V", "OPEN WORLD ACTION", "Rockstar Games", "steam://rungameid/271590", "vip", false },
-    { 14, "EA Sports FC 25", "GAME PASS SPORTS", "EA Play / Xbox", "xbox://", "vip", false },
-
-    // KELAS VIP++ (AAA Ray Tracing Ultra / 2K & Live Streaming - PC-13 s/d PC-15)
-    { 15, "Black Myth: Wukong", "AAA RAY TRACING", "Game Science", "steam://rungameid/2358720", "vip++", true },
-    { 16, "Cyberpunk 2077", "AAA RT / DLSS", "CD PROJEKT RED", "steam://rungameid/1091500", "vip++", true },
-    { 17, "Tekken 8 Ultimate", "AAA FIGHTING 2K", "Bandai Namco", "steam://rungameid/1778820", "vip++", true },
-    { 18, "Forza Horizon 5", "AAA RACING SIM", "Xbox Game Studios", "steam://rungameid/1551360", "vip++", true },
-    { 19, "Red Dead Redemption 2", "AAA OPEN WORLD", "Rockstar Games", "steam://rungameid/1174180", "vip++", true },
-    { 20, "Monster Hunter Wilds", "AAA ACTION HUNT", "Capcom", "steam://rungameid/2246340", "vip++", true },
-    { 21, "OBS Studio (Streaming)", "LIVE STREAM PRO", "OBS Project", "obs64.exe", "vip++", false },
-
-    // PLATFORM & TOOLS (Semua PC)
-    { 22, "Steam Client", "GAME PLATFORM", "Valve Corporation", "steam://open/main", "reguler", false },
-    { 23, "Epic Games Launcher", "GAME PLATFORM", "Epic Games", "com.epicgames.launcher://", "reguler", false },
-    { 24, "Discord Voice & Chat", "COMMUNITY CHAT", "Discord Inc.", "discord://", "reguler", false }
-};
+int g_game_page = 0;
 
 bool is_tier_sufficient(const std::string& current_tier, const std::string& min_tier) {
     if (min_tier == "reguler") return true;
@@ -254,19 +210,46 @@ std::string format_timer(int total_seconds) {
     return oss.str();
 }
 
-void launch_game(int game_id) {
-    for (const auto& g : g_popular_games) {
-        if (g.id == game_id) {
-            HINSTANCE res = ShellExecuteA(NULL, "open", g.command.c_str(), NULL, NULL, SW_SHOWNORMAL);
-            if ((INT_PTR)res <= 32) {
-                show_toast("Meluncurkan " + g.name + "... Buka shortcut desktop jika game belum terpasang.");
-            } else {
-                show_toast("Meluncurkan " + g.name + "... Client beralih ke Bilah Mini.");
-            }
-            apply_window_mode(MODE_UNLOCKED_MINIBAR);
-            return;
+HINSTANCE execute_game_command(const std::string& command, const std::string& args) {
+    std::string workDir = "";
+    if (command.find("://") == std::string::npos) {
+        size_t pos = command.find_last_of("\\/");
+        if (pos != std::string::npos) {
+            workDir = command.substr(0, pos);
         }
     }
+    return ShellExecuteA(
+        NULL,
+        "open",
+        command.c_str(),
+        args.empty() ? NULL : args.c_str(),
+        workDir.empty() ? NULL : workDir.c_str(),
+        SW_SHOWNORMAL
+    );
+}
+
+void launch_game(int game_id) {
+    GameItem target;
+    bool found = false;
+    {
+        std::lock_guard<std::mutex> lock(g_state.mtx);
+        for (const auto& g : g_state.server_games) {
+            if (g.id == game_id) {
+                target = g;
+                found = true;
+                break;
+            }
+        }
+    }
+    if (!found) return;
+
+    HINSTANCE res = execute_game_command(target.command, target.args);
+    if ((INT_PTR)res <= 32) {
+        show_toast("Gagal meluncurkan " + target.name + ". Periksa path di Dashboard Kasir.");
+    } else {
+        show_toast("Meluncurkan " + target.name + "... Client beralih ke Bilah Mini.");
+    }
+    apply_window_mode(MODE_UNLOCKED_MINIBAR);
 }
 
 void open_game_folder() {
@@ -289,31 +272,49 @@ void open_game_folder() {
 // FITUR KEAMANAN: AUTO-WIPE DATA LOGIN & SESSION CACHE CLEANUP
 // -------------------------------------------------------------
 void cleanup_user_session_cache() {
-    // 1. Matikan seluruh proses game dan launcher yang masih aktif
-    const char* procs[] = {
+    std::string host;
+    {
+        std::lock_guard<std::mutex> lock(g_state.mtx);
+        host = g_state.server_host;
+    }
+    bool is_localhost_dev = (host == "127.0.0.1" || host == "localhost");
+
+    // 1. Matikan proses game aktif
+    const char* game_procs[] = {
         "Valorant.exe", "VALORANT-Win64-Shipping.exe", "RiotClientServices.exe",
         "PointBlank.exe", "cs2.exe", "dota2.exe", "RobloxPlayerBeta.exe",
-        "LostSaga.exe", "GenshinImpact.exe", "WutheringWaves.exe", "ZenlessZoneZero.exe",
-        "GTA5.exe", "PUBG.exe", "r5apex.exe", "steam.exe", "EpicGamesLauncher.exe",
-        "Discord.exe", "obs64.exe", "chrome.exe", "msedge.exe", "firefox.exe"
+        "DeltaForceClient.exe", "df_garena_launcher.exe", "ForzaHorizon5.exe",
+        "GenshinImpact.exe", "WutheringWaves.exe", "ZenlessZoneZero.exe",
+        "GTA5.exe", "aces.exe", "Subnautica.exe", "Raft.exe"
     };
-    for (const char* p : procs) {
+    for (const char* p : game_procs) {
         std::string cmd = "taskkill /F /IM " + std::string(p) + " >nul 2>&1";
         system(cmd.c_str());
     }
 
-    // 2. Bersihkan file credential cache sementara (Riot, Discord, Browser Temp)
-    char localAppData[MAX_PATH];
-    if (GetEnvironmentVariableA("LOCALAPPDATA", localAppData, MAX_PATH)) {
-        std::string riotData = std::string(localAppData) + "\\Riot Games\\Riot Client\\Data";
-        std::string rmCmd = "rmdir /S /Q \"" + riotData + "\" >nul 2>&1";
-        system(rmCmd.c_str());
-    }
-    char appData[MAX_PATH];
-    if (GetEnvironmentVariableA("APPDATA", appData, MAX_PATH)) {
-        std::string discordStorage = std::string(appData) + "\\discord\\Session Storage";
-        std::string rmCmd2 = "rmdir /S /Q \"" + discordStorage + "\" >nul 2>&1";
-        system(rmCmd2.c_str());
+    // Jika berjalan di PC Client warnet terpisah (bukan testing localhost di laptop admin), wipe browser & Discord
+    if (!is_localhost_dev) {
+        const char* session_procs[] = {
+            "steam.exe", "EpicGamesLauncher.exe", "Discord.exe",
+            "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe"
+        };
+        for (const char* p : session_procs) {
+            std::string cmd = "taskkill /F /IM " + std::string(p) + " >nul 2>&1";
+            system(cmd.c_str());
+        }
+
+        char localAppData[MAX_PATH];
+        if (GetEnvironmentVariableA("LOCALAPPDATA", localAppData, MAX_PATH)) {
+            std::string riotData = std::string(localAppData) + "\\Riot Games\\Riot Client\\Data";
+            std::string rmCmd = "rmdir /S /Q \"" + riotData + "\" >nul 2>&1";
+            system(rmCmd.c_str());
+        }
+        char appData[MAX_PATH];
+        if (GetEnvironmentVariableA("APPDATA", appData, MAX_PATH)) {
+            std::string discordStorage = std::string(appData) + "\\discord\\Session Storage";
+            std::string rmCmd2 = "rmdir /S /Q \"" + discordStorage + "\" >nul 2>&1";
+            system(rmCmd2.c_str());
+        }
     }
 }
 
@@ -356,26 +357,37 @@ void scan_and_terminate_cheat_tools() {
 // -------------------------------------------------------------
 // GAME VAULT: PINJAM LISENSI AKUN GAME AAA WARNET
 // -------------------------------------------------------------
-void borrow_vault_account(const std::string& game_title) {
+void borrow_vault_account(int game_id) {
     std::string host, pc_code;
     int port;
+    GameItem target;
+    bool found = false;
     {
         std::lock_guard<std::mutex> lock(g_state.mtx);
         host = g_state.server_host;
         port = g_state.server_port;
         pc_code = g_state.pc_code;
+        for (const auto& g : g_state.server_games) {
+            if (g.id == game_id) {
+                target = g;
+                found = true;
+                break;
+            }
+        }
     }
-    std::thread([host, port, pc_code, game_title]() {
-        std::string body = "{\"pc_code\":\"" + json_escape(pc_code) + "\",\"game_title\":\"" + json_escape(game_title) + "\"}";
+    if (!found) return;
+
+    std::thread([host, port, pc_code, target]() {
+        std::string body = "{\"pc_code\":\"" + json_escape(pc_code) + "\",\"game_title\":\"" + json_escape(target.name) + "\"}";
         HttpResponse res = http_request(host, port, "POST", "/api/client/game-vault/borrow", body);
         JsonValue root = JsonParser::parse(res.body);
         if (res.status_code == 200 && root["success"].as_bool(false)) {
             std::string accUser = root["account_username"].as_str("");
             g_active_vault_user = accUser;
-            g_active_vault_game = game_title;
-            show_toast("Berhasil meminjam akun " + game_title + " (" + accUser + ")! Meluncurkan Steam...");
-            ShellExecuteA(NULL, "open", "steam://open/main", NULL, NULL, SW_SHOWNORMAL);
-            apply_window_mode(MODE_UNLOCKED_MINIBAR);
+            g_active_vault_game = target.name;
+            show_toast("Berhasil meminjam akun " + target.name + " (" + accUser + ")! Meluncurkan game...");
+            execute_game_command(target.command, target.args);
+            if (g_hwnd) PostMessage(g_hwnd, WM_APP_APPLY_WINDOW_MODE, MODE_UNLOCKED_MINIBAR, 0);
         } else {
             std::string msg = root["message"].as_str("");
             show_toast(msg.empty() ? "Gagal meminjam lisensi akun game vault." : msg);
@@ -436,6 +448,25 @@ void sync_catalog_from_server() {
             if (old_cart.count(m.id)) m.cart_qty = old_cart[m.id];
             g_state.menu_items.push_back(m);
         }
+    }
+
+    // Parse real games from Server Diskless / Steam / Local Scanner
+    if (root.has("games") && root["games"].type == JsonValue::ARRAY) {
+        g_state.server_games.clear();
+        for (const auto& item : root["games"].arr_val) {
+            GameItem gm;
+            gm.id = (int)item["id"].as_int();
+            gm.name = item["name"].as_str();
+            gm.category = item["category"].as_str("PC GAME");
+            gm.publisher = item["publisher"].as_str("Server Local");
+            gm.command = item["launch_command"].as_str();
+            gm.args = item["launch_args"].as_str("");
+            gm.size_formatted = item["size_formatted"].as_str("");
+            gm.min_tier = item["min_tier"].as_str("reguler");
+            gm.is_vault_game = item["is_vault_game"].as_bool(false);
+            g_state.server_games.push_back(gm);
+        }
+        g_state.diskless_total_games = std::to_string(g_state.server_games.size()) + " Game Terdeteksi di Server";
     }
 }
 
@@ -1258,16 +1289,20 @@ void render_ui(HDC hdc, int width, int height) {
 
         if (g_active_tab == 0) {
             // -------------------------------------------------
-            // TAB 0: KATALOG GAME & LAUNCHER (WARNET GAME MENU)
+            // TAB 0: KATALOG GAME & LAUNCHER (SYNC DARI SERVER)
             // -------------------------------------------------
             std::string cur_tier = "reguler";
+            std::string total_games_lbl = "Memuat katalog...";
+            std::vector<GameItem> server_games_copy;
             {
                 std::lock_guard<std::mutex> lock(g_state.mtx);
                 cur_tier = g_state.pc_type;
+                total_games_lbl = g_state.diskless_total_games;
+                server_games_copy = g_state.server_games;
             }
 
-            draw_text(g, "KATALOG & PELUNCUR GAME WARNET", cx, cy, cw - 380, 26, 19.0f, Color(255, 248, 250, 252), FontStyleBold);
-            draw_text(g, "Pilih game untuk langsung bermain di PC ini. Client otomatis mengecil ke Bilah Mini.",
+            draw_text(g, "KATALOG & PELUNCUR GAME SERVER", cx, cy, cw - 380, 26, 19.0f, Color(255, 248, 250, 252), FontStyleBold);
+            draw_text(g, "Daftar game tersinkron langsung dari PC Server (" + total_games_lbl + ").",
                       cx, cy + 28, cw - 380, 20, 11.5f, Color(255, 148, 163, 184));
 
             // Quick actions
@@ -1280,9 +1315,9 @@ void render_ui(HDC hdc, int width, int height) {
             SolidBrush disklessBg(Color(255, 15, 23, 42));
             fill_round_rect(g, &disklessBg, cx, cy + 54, cw, 34, 8);
             draw_round_rect(g, &borderPen, cx, cy + 54, cw, 34, 8);
-            std::string disklessText = "SERVER DISKLESS NVMe: DRIVE D:\\Games (LAN 2.5GbE) • Sekali Patch Terupdate ke 15 PC • Auto-Wipe Cache Saat Logout";
+            std::string disklessText = "SERVER DISKLESS / LOKAL: " + total_games_lbl + " • Sinkronisasi Otomatis Katalog & Patch dari Kasir Server";
             if (!g_active_vault_user.empty()) {
-                disklessText = "LISENSI STEAM SHARING AKTIF: " + g_active_vault_game + " (" + g_active_vault_user + ") • Bebas Main Game AAA Resmi Tanpa Beli Sendiri!";
+                disklessText = "LISENSI STEAM SHARING AKTIF: " + g_active_vault_game + " (" + g_active_vault_user + ") • Bebas Main Game AAA Resmi!";
             }
             draw_text(g, disklessText, cx + 14, cy + 54, cw - 28, 34, 11.0f, !g_active_vault_user.empty() ? Color(255, 251, 191, 36) : Color(255, 34, 211, 238), FontStyleBold, StringAlignmentNear);
 
@@ -1292,9 +1327,9 @@ void render_ui(HDC hdc, int width, int height) {
             struct GameFilterItem { std::string key; std::string label; };
             std::vector<GameFilterItem> gFilters = {
                 { "all", "Semua Game" },
-                { "f2p", "F2P Esports (Reguler)" },
-                { "vip", "Open World & BR (VIP)" },
-                { "vip_plus", "AAA Ray Tracing (VIP++)" },
+                { "f2p", "Kelas Reguler" },
+                { "vip", "Kelas VIP" },
+                { "vip_plus", "Kelas VIP++ Ultra" },
                 { "tools", "Platform & Tools" }
             };
 
@@ -1303,77 +1338,110 @@ void render_ui(HDC hdc, int width, int height) {
                 bool is_active_f = (g_game_category_filter == gf.key);
                 Color f_bg = is_active_f ? Color(255, 6, 182, 212) : Color(255, 30, 41, 59);
                 Color f_fg = is_active_f ? Color(255, 15, 23, 42) : Color(255, 203, 213, 225);
-                int btn_width = (gf.key == "all") ? 100 : (gf.key == "tools" ? 130 : 165);
+                int btn_width = (gf.key == "all") ? 110 : 145;
                 draw_button(g, cur_fx, f_btn_y, btn_width, 28, gf.label, f_bg, f_fg, "filter_game_" + gf.key, 0, 6, 10.5f);
                 cur_fx += btn_width + f_btn_gap;
             }
 
-            // Filtered Games Vector
+            // Filtered Games Vector (Synced from Server)
             std::vector<GameItem> filteredGames;
-            for (const auto& gm : g_popular_games) {
+            for (const auto& gm : server_games_copy) {
+                bool isTool = (gm.category.find("TOOLS") != std::string::npos);
                 if (g_game_category_filter == "all") {
                     filteredGames.push_back(gm);
                 } else if (g_game_category_filter == "f2p") {
-                    if (gm.min_tier == "reguler" && !gm.is_vault_game && gm.id <= 7) filteredGames.push_back(gm);
+                    if (gm.min_tier == "reguler" && !isTool) filteredGames.push_back(gm);
                 } else if (g_game_category_filter == "vip") {
-                    if (gm.min_tier == "vip") filteredGames.push_back(gm);
+                    if (gm.min_tier == "vip" && !isTool) filteredGames.push_back(gm);
                 } else if (g_game_category_filter == "vip_plus") {
-                    if (gm.min_tier == "vip++") filteredGames.push_back(gm);
+                    if (gm.min_tier == "vip++" && !isTool) filteredGames.push_back(gm);
                 } else if (g_game_category_filter == "tools") {
-                    if (gm.id >= 21) filteredGames.push_back(gm);
+                    if (isTool) filteredGames.push_back(gm);
                 }
             }
 
             int cols = 3;
             int gap = 12;
             int card_w = (cw - gap * (cols - 1)) / cols;
-            int card_h = 100;
+            int card_h = 98;
             int start_y = f_btn_y + 36;
+            int max_rows = (height - start_y - 48) / (card_h + gap);
+            if (max_rows < 1) max_rows = 1;
+            int per_page = cols * max_rows;
+            int total_pages = (int)((filteredGames.size() + per_page - 1) / per_page);
+            if (total_pages < 1) total_pages = 1;
+            if (g_game_page >= total_pages) g_game_page = total_pages - 1;
+            if (g_game_page < 0) g_game_page = 0;
 
-            for (size_t i = 0; i < filteredGames.size(); ++i) {
-                const auto& gm = filteredGames[i];
-                int r = (int)i / cols;
-                int c = (int)i % cols;
-                int gx = cx + c * (card_w + gap);
-                int gy = start_y + r * (card_h + gap);
-                if (gy + card_h > height - 15) break;
+            if (filteredGames.empty()) {
+                draw_text(g, server_online ? "Belum ada game terdeteksi di server. Klik 'Scan Ulang Game Server' di Dashboard Kasir." : "Menunggu sinkronisasi katalog game dari Server Kasir...",
+                          cx, start_y + 20, cw, 30, 13.0f, Color(255, 148, 163, 184), FontStyleItalic);
+            } else {
+                size_t idx_start = (size_t)g_game_page * per_page;
+                size_t idx_end = idx_start + per_page;
+                if (idx_end > filteredGames.size()) idx_end = filteredGames.size();
 
-                bool tier_ok = is_tier_sufficient(cur_tier, gm.min_tier);
+                for (size_t i = idx_start; i < idx_end; ++i) {
+                    const auto& gm = filteredGames[i];
+                    size_t local_i = i - idx_start;
+                    int r = (int)local_i / cols;
+                    int c = (int)local_i % cols;
+                    int gx = cx + c * (card_w + gap);
+                    int gy = start_y + r * (card_h + gap);
 
-                SolidBrush gCardBg(Color(220, 30, 41, 59));
-                fill_round_rect(g, &gCardBg, gx, gy, card_w, card_h, 12);
-                draw_round_rect(g, &borderPen, gx, gy, card_w, card_h, 12);
+                    bool tier_ok = is_tier_sufficient(cur_tier, gm.min_tier);
 
-                // Category pill
-                SolidBrush catBg(Color(45, 6, 182, 212));
-                fill_round_rect(g, &catBg, gx + 14, gy + 10, 115, 18, 4);
-                draw_text(g, gm.category, gx + 14, gy + 10, 115, 18, 9.0f, Color(255, 34, 211, 238), FontStyleBold, StringAlignmentCenter);
+                    SolidBrush gCardBg(Color(220, 30, 41, 59));
+                    fill_round_rect(g, &gCardBg, gx, gy, card_w, card_h, 12);
+                    draw_round_rect(g, &borderPen, gx, gy, card_w, card_h, 12);
 
-                // Tier requirement badge
-                if (gm.min_tier == "vip++") {
-                    SolidBrush tierBg(Color(55, 168, 85, 247));
-                    fill_round_rect(g, &tierBg, gx + 135, gy + 10, 75, 18, 4);
-                    draw_text(g, "VIP++ ULTRA", gx + 135, gy + 10, 75, 18, 8.5f, Color(255, 216, 180, 254), FontStyleBold, StringAlignmentCenter);
-                } else if (gm.min_tier == "vip") {
-                    SolidBrush tierBg(Color(55, 245, 158, 11));
-                    fill_round_rect(g, &tierBg, gx + 135, gy + 10, 60, 18, 4);
-                    draw_text(g, "VIP ONLY", gx + 135, gy + 10, 60, 18, 8.5f, Color(255, 251, 191, 36), FontStyleBold, StringAlignmentCenter);
+                    // Category pill
+                    SolidBrush catBg(Color(45, 6, 182, 212));
+                    fill_round_rect(g, &catBg, gx + 14, gy + 10, 122, 18, 4);
+                    draw_text(g, gm.category, gx + 14, gy + 10, 122, 18, 8.5f, Color(255, 34, 211, 238), FontStyleBold, StringAlignmentCenter);
+
+                    // Tier requirement badge
+                    if (gm.min_tier == "vip++") {
+                        SolidBrush tierBg(Color(55, 168, 85, 247));
+                        fill_round_rect(g, &tierBg, gx + 142, gy + 10, 74, 18, 4);
+                        draw_text(g, "VIP++ ULTRA", gx + 142, gy + 10, 74, 18, 8.5f, Color(255, 216, 180, 254), FontStyleBold, StringAlignmentCenter);
+                    } else if (gm.min_tier == "vip") {
+                        SolidBrush tierBg(Color(55, 245, 158, 11));
+                        fill_round_rect(g, &tierBg, gx + 142, gy + 10, 62, 18, 4);
+                        draw_text(g, "VIP ONLY", gx + 142, gy + 10, 62, 18, 8.5f, Color(255, 251, 191, 36), FontStyleBold, StringAlignmentCenter);
+                    }
+
+                    // Game Name & Publisher + Size
+                    draw_text(g, gm.name, gx + 14, gy + 31, card_w - 28, 22, 13.0f, Color(255, 248, 250, 252), FontStyleBold);
+                    draw_text(g, gm.publisher, gx + 14, gy + 53, card_w - 140, 16, 10.0f, Color(255, 148, 163, 184));
+                    if (!gm.size_formatted.empty()) {
+                        draw_text(g, "Ukuran: " + gm.size_formatted, gx + 14, gy + 70, card_w - 140, 16, 9.5f, Color(255, 100, 116, 139));
+                    }
+
+                    // Action Button based on Tier & Vault requirement
+                    if (!tier_ok) {
+                        draw_button(g, gx + card_w - 118, gy + 54, 104, 32, "TERKUNCI",
+                                    Color(255, 51, 65, 85), Color(255, 148, 163, 184), "game_locked_tier", gm.id, 6, 10.5f);
+                    } else if (gm.is_vault_game) {
+                        draw_button(g, gx + card_w - 130, gy + 54, 116, 32, "PINJAM & MAIN",
+                                    Color(255, 6, 182, 212), Color(255, 15, 23, 42), "borrow_vault_game", gm.id, 6, 10.0f);
+                    } else {
+                        draw_button(g, gx + card_w - 110, gy + 54, 96, 32, "MAINKAN",
+                                    Color(255, 16, 185, 129), Color(255, 15, 23, 42), "launch_game", gm.id, 6, 11.0f);
+                    }
                 }
+            }
 
-                // Game Name & Publisher
-                draw_text(g, gm.name, gx + 14, gy + 32, card_w - 28, 22, 13.5f, Color(255, 248, 250, 252), FontStyleBold);
-                draw_text(g, gm.publisher, gx + 14, gy + 54, card_w - 140, 18, 10.5f, Color(255, 148, 163, 184));
-
-                // Action Button based on Tier & Vault requirement
-                if (!tier_ok) {
-                    draw_button(g, gx + card_w - 124, gy + 56, 110, 32, "TERKUNCI",
-                                Color(255, 51, 65, 85), Color(255, 148, 163, 184), "game_locked_tier", gm.id, 6, 10.5f);
-                } else if (gm.is_vault_game) {
-                    draw_button(g, gx + card_w - 134, gy + 56, 120, 32, "PINJAM & MAIN",
-                                Color(255, 6, 182, 212), Color(255, 15, 23, 42), "borrow_vault_game", gm.id, 6, 10.5f);
-                } else {
-                    draw_button(g, gx + card_w - 114, gy + 56, 100, 32, "MAINKAN",
-                                Color(255, 16, 185, 129), Color(255, 15, 23, 42), "launch_game", gm.id, 6, 11.0f);
+            // Pagination Bar if multiple pages
+            int pag_y = height - 40;
+            if (total_pages > 1) {
+                if (g_game_page > 0) {
+                    draw_button(g, cx, pag_y, 135, 28, "< Sebelumnya", Color(255, 30, 41, 59), Color(255, 248, 250, 252), "game_page_prev", 0, 6, 10.5f);
+                }
+                draw_text(g, "Halaman " + std::to_string(g_game_page + 1) + " dari " + std::to_string(total_pages) + " (" + std::to_string(filteredGames.size()) + " Game Terinstal di Server)",
+                          cx + 150, pag_y, cw - 300, 28, 11.0f, Color(255, 148, 163, 184), FontStyleRegular, StringAlignmentCenter);
+                if (g_game_page + 1 < total_pages) {
+                    draw_button(g, cx + cw - 135, pag_y, 135, 28, "Berikutnya >", Color(255, 30, 41, 59), Color(255, 248, 250, 252), "game_page_next", 0, 6, 10.5f);
                 }
             }
 
@@ -1826,25 +1894,25 @@ void handle_click(int x, int y) {
             else if (act == "expand_dashboard") { apply_window_mode(MODE_UNLOCKED_DASHBOARD); }
             else if (act == "launch_game") { launch_game(id); }
             else if (act == "borrow_vault_game") {
-                for (const auto& gm : g_popular_games) {
-                    if (gm.id == id) {
-                        borrow_vault_account(gm.name);
-                        break;
-                    }
-                }
+                borrow_vault_account(id);
             }
             else if (act == "game_locked_tier") {
-                for (const auto& gm : g_popular_games) {
+                std::lock_guard<std::mutex> lock(g_state.mtx);
+                for (const auto& gm : g_state.server_games) {
                     if (gm.id == id) {
                         std::string targetTier = (gm.min_tier == "vip++") ? "VIP++ (PC-13 s/d PC-15)" : "VIP (PC-08 s/d PC-12)";
-                        show_toast("Game " + gm.name + " membutuhkan spesifikasi PC " + targetTier + "! Silakan pindah PC.");
+                        g_state.toast_text = "Game " + gm.name + " membutuhkan spesifikasi PC " + targetTier + "! Silakan pindah PC.";
+                        g_state.toast_until_tick = GetTickCount64() + 3500;
                         break;
                     }
                 }
             }
             else if (act.rfind("filter_game_", 0) == 0) {
                 g_game_category_filter = act.substr(12);
+                g_game_page = 0;
             }
+            else if (act == "game_page_prev") { if (g_game_page > 0) g_game_page--; }
+            else if (act == "game_page_next") { g_game_page++; }
             else if (act == "open_game_folder") { open_game_folder(); }
             else if (act == "cfg_exit_app") { DestroyWindow(g_hwnd); }
             else if (act == "switch_tab") { g_active_tab = id; g_focused_input = 0; }

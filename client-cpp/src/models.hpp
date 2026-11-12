@@ -33,6 +33,18 @@ struct ActiveOrder {
     std::string created_at;
 };
 
+struct GameItem {
+    int id = 0;
+    std::string name;
+    std::string category;
+    std::string publisher;
+    std::string command;
+    std::string args;
+    std::string size_formatted;
+    std::string min_tier = "reguler"; // "reguler", "vip", "vip++"
+    bool is_vault_game = false;
+};
+
 struct ClientState {
     std::mutex mtx;
 
@@ -43,6 +55,7 @@ struct ClientState {
     std::string pc_type = "reguler"; // "reguler", "vip", "vip++"
     long long hourly_rate = 5000;
     std::string specs = "";
+    std::string diskless_total_games = "Memuat katalog server...";
 
     // Connection & Session
     bool server_online = false;
@@ -61,6 +74,7 @@ struct ClientState {
     std::vector<BillingPackage> packages;
     std::vector<MenuItem> menu_items;
     std::vector<ActiveOrder> active_orders;
+    std::vector<GameItem> server_games;
 
     // Notification banner
     std::string toast_text = "";

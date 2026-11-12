@@ -1690,7 +1690,7 @@
                             <p class="text-xs text-gray-500 dark:text-gray-400">
                                 Seluruh file game tersimpan di server dan otomatis terbaca sebagai Local Disk (D:) di 15 PC Client melalui jaringan 2.5GbE.
                             </p>
-                            <div class="text-[11px] font-medium text-blue-500 mono">D:\Games - 48 Game Siap Main</div>
+                            <div class="text-[11px] font-medium text-blue-500 mono">{{ $disklessConfigs['total_games'] ?? ($serverGames->where('is_visible', true)->count() . ' Game Terdeteksi') }}</div>
                         </div>
 
                         <!-- Card 2: Jaringan & Infrastruktur -->
@@ -1741,7 +1741,129 @@
                                 <strong>Log Diskless:</strong> {{ $disklessConfigs['last_update_log'] ?? 'Semua 15 PC terhubung ke Master Game Disk D:' }}
                             </span>
                         </div>
-                        <span class="text-[11px] text-gray-400 mono">Pembaruan patch disinkronkan otomatis</span>
+                        <span class="text-[11px] text-gray-400 mono">Sinkronisasi real-time ke Client C++</span>
+                    </div>
+
+                    <!-- Bagian Katalog Game Asli Server (Auto-Scan Disk & Steam) -->
+                    <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 shadow-sm space-y-6">
+                        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                            <div>
+                                <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                                    Katalog Game Terdeteksi di Server ({{ $serverGames->count() }} Game)
+                                </h3>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    Daftar di bawah diambil langsung dari instalasi Steam Library, launcher game, dan folder diskless di PC Server ini lalu dikirim ke seluruh Client C++.
+                                </p>
+                            </div>
+                            <form action="{{ route('kasir.diskless.scan') }}" method="POST" class="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+                                @csrf
+                                <input type="text" name="scan_paths" value="{{ $disklessConfigs['scan_paths'] ?? 'D:\Games;C:\Games;D:\SteamLibrary;D:\Delta Force' }}"
+                                       placeholder="Folder scan dipisah ;"
+                                       class="px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-800 dark:text-gray-200 w-full sm:w-80 mono">
+                                <button type="submit" class="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold whitespace-nowrap">
+                                    Scan Ulang Game Server
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- Form Tambah Game Manual -->
+                        <form action="{{ route('kasir.games.store') }}" method="POST" class="p-4 rounded-lg bg-gray-50 dark:bg-gray-950/60 border border-gray-200 dark:border-gray-800 grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                            @csrf
+                            <div class="md:col-span-3">
+                                <label class="block text-[10px] font-semibold uppercase text-gray-400 mb-1">Nama Game / Aplikasi</label>
+                                <input type="text" name="name" required placeholder="Misal: Valorant / Point Blank"
+                                       class="w-full px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200">
+                            </div>
+                            <div class="md:col-span-4">
+                                <label class="block text-[10px] font-semibold uppercase text-gray-400 mb-1">Path .EXE / Perintah Peluncur</label>
+                                <input type="text" name="launch_command" required placeholder="D:\Games\PointBlank\PointBlank.exe"
+                                       class="w-full px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 mono">
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-[10px] font-semibold uppercase text-gray-400 mb-1">Kategori</label>
+                                <input type="text" name="category" placeholder="FPS / RPG / TOOLS"
+                                       class="w-full px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200">
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-[10px] font-semibold uppercase text-gray-400 mb-1">Minimal Kelas PC</label>
+                                <select name="min_tier" class="w-full px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200">
+                                    <option value="reguler">Reguler</option>
+                                    <option value="vip">VIP Only</option>
+                                    <option value="vip++">VIP++ Ultra</option>
+                                </select>
+                            </div>
+                            <div class="md:col-span-1">
+                                <button type="submit" class="w-full py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold">
+                                    + Tambah
+                                </button>
+                            </div>
+                        </form>
+
+                        <!-- Tabel Daftar Game Terdeteksi -->
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="border-b border-gray-200 dark:border-gray-800 text-[11px] uppercase text-gray-400">
+                                        <th class="py-2.5 px-3">Game & Lokasi di Server</th>
+                                        <th class="py-2.5 px-3">Ukuran</th>
+                                        <th class="py-2.5 px-3">Kategori</th>
+                                        <th class="py-2.5 px-3">Kelas PC</th>
+                                        <th class="py-2.5 px-3">Opsi Client</th>
+                                        <th class="py-2.5 px-3 text-right">Aksi</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100 dark:divide-gray-800/70 text-xs">
+                                    @foreach($serverGames as $sg)
+                                        <tr class="hover:bg-gray-50/60 dark:hover:bg-gray-800/30 {{ !$sg->is_visible ? 'opacity-50' : '' }}">
+                                            <td class="py-3 px-3">
+                                                <form id="form-upd-game-{{ $sg->id }}" action="{{ route('kasir.games.update', $sg) }}" method="POST">@csrf</form>
+                                                <div class="font-semibold text-gray-900 dark:text-gray-100">{{ $sg->name }}</div>
+                                                <div class="text-[10px] text-gray-400 mono truncate max-w-xs" title="{{ $sg->launch_command }}">
+                                                    {{ $sg->publisher }} | {{ $sg->launch_command }} {{ $sg->launch_args }}
+                                                </div>
+                                            </td>
+                                            <td class="py-3 px-3 mono text-[11px] text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                                                {{ $sg->size_formatted }}
+                                            </td>
+                                            <td class="py-3 px-3">
+                                                <input type="text" name="category" value="{{ $sg->category }}" form="form-upd-game-{{ $sg->id }}"
+                                                       class="px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 text-gray-700 dark:text-gray-300 w-36">
+                                            </td>
+                                            <td class="py-3 px-3">
+                                                <select name="min_tier" form="form-upd-game-{{ $sg->id }}" class="px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 text-gray-700 dark:text-gray-300">
+                                                    <option value="reguler" {{ $sg->min_tier === 'reguler' ? 'selected' : '' }}>Reguler</option>
+                                                    <option value="vip" {{ $sg->min_tier === 'vip' ? 'selected' : '' }}>VIP Only</option>
+                                                    <option value="vip++" {{ $sg->min_tier === 'vip++' ? 'selected' : '' }}>VIP++ Ultra</option>
+                                                </select>
+                                            </td>
+                                            <td class="py-3 px-3">
+                                                <div class="flex flex-col gap-1">
+                                                    <label class="inline-flex items-center gap-1.5 text-[11px] text-gray-600 dark:text-gray-300 cursor-pointer">
+                                                        <input type="checkbox" name="is_visible" value="1" form="form-upd-game-{{ $sg->id }}" {{ $sg->is_visible ? 'checked' : '' }} class="rounded">
+                                                        <span>Tampil di Client</span>
+                                                    </label>
+                                                    <label class="inline-flex items-center gap-1.5 text-[11px] text-amber-500 cursor-pointer">
+                                                        <input type="checkbox" name="is_vault_game" value="1" form="form-upd-game-{{ $sg->id }}" {{ $sg->is_vault_game ? 'checked' : '' }} class="rounded">
+                                                        <span>Pinjam Akun Vault</span>
+                                                    </label>
+                                                </div>
+                                            </td>
+                                            <td class="py-3 px-3 text-right whitespace-nowrap space-x-1">
+                                                <button type="submit" form="form-upd-game-{{ $sg->id }}" class="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold">
+                                                    Simpan
+                                                </button>
+                                                <form action="{{ route('kasir.games.delete', $sg) }}" method="POST" class="inline" onsubmit="return confirm('Hapus game {{ $sg->name }} dari daftar?')">
+                                                    @csrf
+                                                    <button type="submit" class="px-2.5 py-1 rounded bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white text-[11px] font-semibold transition">
+                                                        Hapus
+                                                    </button>
+                                                </form>
+                                            </td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
 
                     <!-- Bagian Game Vault: Lisensi Akun Sharing Steam AAA & Game Pass -->
