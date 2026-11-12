@@ -24,6 +24,9 @@ class KasirController extends Controller
 
         $totalRevenueToday = Order::where('payment_status', 'paid')->sum('total_price');
         $activePcsCount = $pcs->where('is_locked', false)->count();
+        $regulerPcsCount = $pcs->where('pc_type', 'reguler')->count();
+        $vipPcsCount = $pcs->where('pc_type', 'vip')->count();
+        $vipPlusPcsCount = $pcs->where('pc_type', 'vip++')->count();
         $kitchenQueueCount = Order::where('order_type', 'food')
             ->whereIn('kitchen_status', ['waiting', 'cooking', 'ready'])
             ->count();
@@ -55,6 +58,9 @@ class KasirController extends Controller
             'orders',
             'totalRevenueToday',
             'activePcsCount',
+            'regulerPcsCount',
+            'vipPcsCount',
+            'vipPlusPcsCount',
             'kitchenQueueCount',
             'pendingQrisCount',
             'waitingOrders',
@@ -114,6 +120,9 @@ class KasirController extends Controller
                 'id' => $pc->id,
                 'pc_code' => $pc->pc_code,
                 'name' => $pc->name,
+                'pc_type' => $pc->pc_type ?? 'reguler',
+                'hourly_rate' => (int) ($pc->hourly_rate ?? 5000),
+                'specs' => $pc->specs ?? '',
                 'is_locked' => (bool) $pc->is_locked,
                 'is_online' => $pc->isOnline(),
                 'remaining_seconds' => $rem,
@@ -130,7 +139,11 @@ class KasirController extends Controller
             'pcs' => $pcs,
             'orders' => $orders,
             'total_revenue' => Order::where('payment_status', 'paid')->sum('total_price'),
+            'total_pcs' => $pcs->count(),
             'active_pcs' => $pcs->where('is_locked', false)->count(),
+            'count_reguler' => $pcs->where('pc_type', 'reguler')->count(),
+            'count_vip' => $pcs->where('pc_type', 'vip')->count(),
+            'count_vip_plus' => $pcs->where('pc_type', 'vip++')->count(),
             'kitchen_queue' => Order::where('order_type', 'food')->whereIn('kitchen_status', ['waiting', 'cooking', 'ready'])->count(),
             'pending_qris' => Order::where('payment_status', 'pending')->count(),
         ]);
@@ -403,6 +416,7 @@ class KasirController extends Controller
         BillingPackage::create([
             'name' => $request->input('name'),
             'duration_minutes' => max(1, (int) $request->input('duration_minutes', 60)),
+            'pc_type' => $request->input('pc_type', 'all'),
             'price' => max(0, (int) $request->input('price', 7000)),
             'description' => $request->input('description', 'Paket billing warnet'),
             'is_active' => true,
@@ -416,6 +430,7 @@ class KasirController extends Controller
         $package->update([
             'name' => $request->input('name'),
             'duration_minutes' => max(1, (int) $request->input('duration_minutes', 60)),
+            'pc_type' => $request->input('pc_type', 'all'),
             'price' => max(0, (int) $request->input('price', 0)),
             'description' => $request->input('description', ''),
         ]);
@@ -487,5 +502,142 @@ class KasirController extends Controller
         }
 
         return back()->with('success', "Pembayaran untuk {$order->order_code} berhasil dikonfirmasi LUNAS.");
+    }
+
+    public function storePc(Request $request)
+    {
+        $request->validate([
+            'pc_code' => 'required|unique:pc_clients,pc_code',
+            'pc_type' => 'required|in:reguler,vip,vip++',
+        ]);
+
+        $type = $request->input('pc_type', 'reguler');
+        $defaultRate = match ($type) {
+            'vip' => 8000,
+            'vip++' => 12000,
+            default => 5000,
+        };
+
+        $code = strtoupper(trim($request->input('pc_code')));
+        $name = trim($request->input('name')) ?: "Terminal $code";
+
+        $pc = PcClient::create([
+            'pc_code' => $code,
+            'name' => $name,
+            'pc_type' => $type,
+            'hourly_rate' => max(0, (int) $request->input('hourly_rate', $defaultRate)),
+            'specs' => $request->input('specs'),
+            'status' => 'locked',
+            'is_locked' => true,
+            'remaining_seconds_cache' => 0,
+        ]);
+
+        return back()->with('success', "Terminal {$pc->pc_code} ({$pc->pc_type}) berhasil ditambahkan.");
+    }
+
+    public function updatePc(Request $request, PcClient $pc)
+    {
+        $request->validate([
+            'pc_code' => 'required|unique:pc_clients,pc_code,' . $pc->id,
+            'pc_type' => 'required|in:reguler,vip,vip++',
+        ]);
+
+        $pc->update([
+            'pc_code' => strtoupper(trim($request->input('pc_code'))),
+            'name' => trim($request->input('name')) ?: $pc->name,
+            'pc_type' => $request->input('pc_type'),
+            'hourly_rate' => max(0, (int) $request->input('hourly_rate', $pc->hourly_rate)),
+            'specs' => $request->input('specs'),
+        ]);
+
+        return back()->with('success', "Data terminal {$pc->pc_code} berhasil diperbarui.");
+    }
+
+    public function destroyPc(PcClient $pc)
+    {
+        if (!$pc->is_locked) {
+            return back()->with('error', "Terminal {$pc->pc_code} sedang aktif digunakan, silakan kunci terlebih dahulu sebelum menghapus.");
+        }
+
+        $code = $pc->pc_code;
+        $pc->delete();
+        return back()->with('success', "Terminal {$code} berhasil dihapus.");
+    }
+
+    public function batchGeneratePcs(Request $request)
+    {
+        $regCount = max(0, min(50, (int) $request->input('count_reguler', 6)));
+        $vipCount = max(0, min(50, (int) $request->input('count_vip', 3)));
+        $vipPlusCount = max(0, min(50, (int) $request->input('count_vip_plus', 1)));
+
+        $totalDesired = $regCount + $vipCount + $vipPlusCount;
+        if ($totalDesired < 1) {
+            return back()->with('error', 'Jumlah total terminal PC minimal 1 unit.');
+        }
+
+        $index = 1;
+
+        // 1. Reguler PCs
+        for ($i = 0; $i < $regCount; $i++, $index++) {
+            $code = sprintf('PC-%02d', $index);
+            $pc = PcClient::firstOrNew(['pc_code' => $code]);
+            if (!$pc->exists) {
+                $pc->name = "Terminal Reguler #$index";
+                $pc->status = 'locked';
+                $pc->is_locked = true;
+            }
+            $pc->pc_type = 'reguler';
+            $pc->hourly_rate = (int) $request->input('rate_reguler', 5000);
+            if ($request->filled('specs_reguler') || !$pc->specs) {
+                $pc->specs = $request->input('specs_reguler', 'Core i5-12400F / RTX 3060 12GB / RAM 16GB / Monitor 165Hz');
+            }
+            $pc->save();
+        }
+
+        // 2. VIP PCs
+        for ($i = 0; $i < $vipCount; $i++, $index++) {
+            $code = sprintf('PC-%02d', $index);
+            $pc = PcClient::firstOrNew(['pc_code' => $code]);
+            if (!$pc->exists) {
+                $pc->name = "Terminal VIP #$index";
+                $pc->status = 'locked';
+                $pc->is_locked = true;
+            }
+            $pc->pc_type = 'vip';
+            $pc->hourly_rate = (int) $request->input('rate_vip', 8000);
+            if ($request->filled('specs_vip') || !$pc->specs) {
+                $pc->specs = $request->input('specs_vip', 'Core i7-13700F / RTX 4070 12GB / RAM 32GB / Monitor 240Hz Curved');
+            }
+            $pc->save();
+        }
+
+        // 3. VIP++ PCs
+        for ($i = 0; $i < $vipPlusCount; $i++, $index++) {
+            $code = sprintf('PC-%02d', $index);
+            $pc = PcClient::firstOrNew(['pc_code' => $code]);
+            if (!$pc->exists) {
+                $pc->name = "Terminal VIP++ Sultan #$index";
+                $pc->status = 'locked';
+                $pc->is_locked = true;
+            }
+            $pc->pc_type = 'vip++';
+            $pc->hourly_rate = (int) $request->input('rate_vip_plus', 12000);
+            if ($request->filled('specs_vip_plus') || !$pc->specs) {
+                $pc->specs = $request->input('specs_vip_plus', 'Core i9-14900K / RTX 4090 24GB / RAM 64GB / Monitor 360Hz ROG + Kursi Gaming Titan');
+            }
+            $pc->save();
+        }
+
+        // Opsi pangkas PC berlebih jika dipilih
+        if ($request->input('trim_excess') == '1') {
+            $extraPcs = PcClient::where('is_locked', true)
+                ->where('pc_code', '>', sprintf('PC-%02d', $totalDesired))
+                ->get();
+            foreach ($extraPcs as $extra) {
+                $extra->delete();
+            }
+        }
+
+        return back()->with('success', "Konfigurasi terminal berhasil diterapkan: $regCount Reguler, $vipCount VIP, $vipPlusCount VIP++ (Total $totalDesired PC).");
     }
 }

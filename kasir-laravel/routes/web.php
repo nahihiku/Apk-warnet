@@ -14,6 +14,12 @@ Route::get('/kasir/live-state', [KasirController::class, 'liveState'])->name('ka
 
 Route::post('/kasir/pc-control', [KasirController::class, 'controlPc'])->name('kasir.pc.control');
 
+// PC Terminal Management (Add, Edit, Delete, Batch Sizer)
+Route::post('/kasir/pcs/store', [KasirController::class, 'storePc'])->name('kasir.pc.store');
+Route::post('/kasir/pcs/{pc}/update', [KasirController::class, 'updatePc'])->name('kasir.pc.update');
+Route::post('/kasir/pcs/{pc}/delete', [KasirController::class, 'destroyPc'])->name('kasir.pc.delete');
+Route::post('/kasir/pcs/batch-generate', [KasirController::class, 'batchGeneratePcs'])->name('kasir.pc.batch');
+
 // Member Routes (Top-Up Saldo/Paket, Create, Edit/Update, Delete)
 Route::post('/kasir/member-topup', [KasirController::class, 'topupMember'])->name('kasir.member.topup');
 Route::post('/kasir/member-store', [KasirController::class, 'storeMember'])->name('kasir.member.store');

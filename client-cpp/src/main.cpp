@@ -122,6 +122,7 @@ void sync_catalog_from_server() {
             pkg.name = item["name"].as_str();
             pkg.duration_minutes = (int)item["duration_minutes"].as_int();
             pkg.price = item["price"].as_int();
+            pkg.pc_type = item["pc_type"].as_str("all");
             pkg.description = item["description"].as_str();
             g_state.packages.push_back(pkg);
         }
@@ -180,6 +181,9 @@ void sync_heartbeat() {
         g_state.member_name = root["member_name"].as_str("-");
         g_state.member_username = root["member_username"].as_str("");
         g_state.member_balance = root["member_balance"].as_int(0);
+        g_state.pc_type = root["pc_type"].as_str("reguler");
+        g_state.hourly_rate = root["hourly_rate"].as_int(5000);
+        g_state.specs = root["specs"].as_str("");
 
         std::string msg = root["admin_message"].as_str("");
         int msg_id = (int)root["message_id"].as_int(0);
@@ -531,8 +535,8 @@ void render_ui(HDC hdc, int width, int height) {
 
     // Copy state safely
     bool is_locked, server_online;
-    std::string pc_code, member_name, member_user, server_host;
-    long long member_balance;
+    std::string pc_code, pc_type, specs, member_name, member_user, server_host;
+    long long member_balance, hourly_rate;
     int remaining_seconds, server_port;
     std::vector<BillingPackage> packages;
     std::vector<MenuItem> menu_items;
@@ -545,6 +549,9 @@ void render_ui(HDC hdc, int width, int height) {
         is_locked = g_state.is_locked;
         server_online = g_state.server_online;
         pc_code = g_state.pc_code;
+        pc_type = g_state.pc_type;
+        specs = g_state.specs;
+        hourly_rate = g_state.hourly_rate;
         member_name = g_state.member_name;
         member_user = g_state.member_username;
         member_balance = g_state.member_balance;
@@ -602,9 +609,30 @@ void render_ui(HDC hdc, int width, int height) {
                   pad + 225, pad + 28, 200, 34, 11.5f, statusCol, FontStyleBold);
 
         // Big PC Number Display
-        draw_text(g, pc_code, pad + 30, pad + 75, 360, 85, 64.0f, Color(255, 248, 250, 252), FontStyleBold);
-        draw_text(g, "TERMINAL LOCKED — SILAKAN LOGIN MEMBER ATAU HUBUNGI KASIR",
-                  pad + 32, pad + 162, left_w - 60, 28, 13.0f, Color(255, 148, 163, 184), FontStyleBold);
+        draw_text(g, pc_code, pad + 30, pad + 75, 210, 85, 64.0f, Color(255, 248, 250, 252), FontStyleBold);
+
+        // PC Tier Badge
+        Color tierCol = Color(255, 56, 189, 248);
+        Color tierBgCol = Color(40, 6, 182, 212);
+        std::string tierLabel = "REGULER";
+        if (pc_type == "vip") {
+            tierCol = Color(255, 251, 191, 36);
+            tierBgCol = Color(40, 245, 158, 11);
+            tierLabel = "VIP";
+        } else if (pc_type == "vip++") {
+            tierCol = Color(255, 192, 132, 252);
+            tierBgCol = Color(40, 168, 85, 247);
+            tierLabel = "VIP++";
+        }
+        SolidBrush tierBadgeBg(tierBgCol);
+        fill_round_rect(g, &tierBadgeBg, pad + 245, pad + 96, 95, 34, 8);
+        draw_text(g, tierLabel, pad + 245, pad + 96, 95, 34, 13.0f, tierCol, FontStyleBold, StringAlignmentCenter, StringAlignmentCenter);
+
+        std::string subText = "TERMINAL " + tierLabel + " — SILAKAN LOGIN MEMBER ATAU HUBUNGI KASIR";
+        if (!specs.empty()) {
+            subText = specs + " (Tarif: " + format_rupiah(hourly_rate) + "/jam)";
+        }
+        draw_text(g, subText, pad + 32, pad + 162, left_w - 60, 28, 12.0f, Color(255, 148, 163, 184), FontStyleBold);
 
         // Switch PC Number Quick Buttons (for testing multiple PCs easily)
         draw_button(g, pad + left_w - 230, pad + 95, 95, 34, "< PC Sebelumnya", Color(255, 30, 41, 59), Color(255, 203, 213, 225), "prev_pc", 0, 6, 11.0f);
@@ -691,28 +719,41 @@ void render_ui(HDC hdc, int width, int height) {
         g.DrawLine(&borderPen, 0, 80, width, 80);
 
         // Station Badge in Header
-        SolidBrush stationBg(Color(45, 6, 182, 212));
-        fill_round_rect(g, &stationBg, 24, 18, 110, 48, 10);
-        draw_text(g, pc_code, 24, 18, 110, 48, 20.0f, Color(255, 34, 211, 238), FontStyleBold, StringAlignmentCenter, StringAlignmentCenter);
+        Color tierCol = Color(255, 56, 189, 248);
+        Color tierBgCol = Color(40, 6, 182, 212);
+        std::string tierLabel = "REGULER";
+        if (pc_type == "vip") {
+            tierCol = Color(255, 251, 191, 36);
+            tierBgCol = Color(40, 245, 158, 11);
+            tierLabel = "VIP";
+        } else if (pc_type == "vip++") {
+            tierCol = Color(255, 192, 132, 252);
+            tierBgCol = Color(40, 168, 85, 247);
+            tierLabel = "VIP++";
+        }
+
+        SolidBrush stationBg(tierBgCol);
+        fill_round_rect(g, &stationBg, 24, 18, 150, 48, 10);
+        draw_text(g, pc_code + " [" + tierLabel + "]", 24, 18, 150, 48, 14.5f, tierCol, FontStyleBold, StringAlignmentCenter, StringAlignmentCenter);
 
         // Member Info
-        draw_text(g, "MEMBER AKTIF", 150, 18, 160, 20, 10.5f, Color(255, 148, 163, 184), FontStyleBold);
+        draw_text(g, "MEMBER AKTIF", 188, 18, 170, 20, 10.5f, Color(255, 148, 163, 184), FontStyleBold);
         draw_text(g, member_name + (member_user.empty() ? "" : " (@" + member_user + ")"),
-                  150, 38, 250, 26, 15.0f, Color(255, 248, 250, 252), FontStyleBold);
+                  188, 38, 230, 26, 14.5f, Color(255, 248, 250, 252), FontStyleBold);
 
         // Balance Card in Header
         SolidBrush balBg(Color(35, 16, 185, 129));
-        fill_round_rect(g, &balBg, 410, 16, 205, 52, 10);
-        draw_text(g, "SALDO MEMBER", 424, 20, 175, 18, 10.0f, Color(255, 110, 231, 183), FontStyleBold);
-        draw_text(g, format_rupiah(member_balance), 424, 38, 175, 26, 16.5f, Color(255, 52, 211, 153), FontStyleBold);
+        fill_round_rect(g, &balBg, 430, 16, 195, 52, 10);
+        draw_text(g, "SALDO MEMBER", 442, 20, 170, 18, 10.0f, Color(255, 110, 231, 183), FontStyleBold);
+        draw_text(g, format_rupiah(member_balance), 442, 38, 170, 26, 16.0f, Color(255, 52, 211, 153), FontStyleBold);
 
         // Remaining Timer Card in Header
         bool low_time = (remaining_seconds < 300);
         SolidBrush timeBg(low_time ? Color(45, 239, 68, 68) : Color(40, 99, 102, 241));
-        fill_round_rect(g, &timeBg, 630, 16, 220, 52, 10);
-        draw_text(g, "SISA WAKTU BILLING", 644, 20, 190, 18, 10.0f,
+        fill_round_rect(g, &timeBg, 638, 16, 210, 52, 10);
+        draw_text(g, "SISA WAKTU BILLING", 650, 20, 185, 18, 10.0f,
                   low_time ? Color(255, 252, 165, 165) : Color(255, 165, 180, 252), FontStyleBold);
-        draw_text(g, format_timer(remaining_seconds), 644, 36, 190, 28, 20.0f,
+        draw_text(g, format_timer(remaining_seconds), 650, 36, 185, 28, 20.0f,
                   low_time ? Color(255, 248, 113, 113) : Color(255, 224, 231, 255), FontStyleBold);
 
         // Logout / Lock Button
@@ -794,9 +835,31 @@ void render_ui(HDC hdc, int width, int height) {
 
                 // Duration Pill
                 SolidBrush pillBg(Color(45, 56, 189, 248));
-                fill_round_rect(g, &pillBg, px + 18, py + 16, 110, 26, 6);
+                fill_round_rect(g, &pillBg, px + 18, py + 16, 95, 26, 6);
                 draw_text(g, std::to_string(pkg.duration_minutes) + " MENIT",
-                          px + 18, py + 16, 110, 26, 11.0f, Color(255, 56, 189, 248), FontStyleBold, StringAlignmentCenter);
+                          px + 18, py + 16, 95, 26, 11.0f, Color(255, 56, 189, 248), FontStyleBold, StringAlignmentCenter);
+
+                // Tier Pill
+                std::string pkgTier = pkg.pc_type;
+                std::string tierTxt = "ALL PC";
+                Color tCol = Color(255, 148, 163, 184);
+                Color tBg = Color(35, 148, 163, 184);
+                if (pkgTier == "reguler") {
+                    tierTxt = "REGULER";
+                    tCol = Color(255, 56, 189, 248);
+                    tBg = Color(40, 6, 182, 212);
+                } else if (pkgTier == "vip") {
+                    tierTxt = "VIP";
+                    tCol = Color(255, 251, 191, 36);
+                    tBg = Color(40, 245, 158, 11);
+                } else if (pkgTier == "vip++") {
+                    tierTxt = "VIP++";
+                    tCol = Color(255, 192, 132, 252);
+                    tBg = Color(40, 168, 85, 247);
+                }
+                SolidBrush tierPillBg(tBg);
+                fill_round_rect(g, &tierPillBg, px + 120, py + 16, 80, 26, 6);
+                draw_text(g, tierTxt, px + 120, py + 16, 80, 26, 10.5f, tCol, FontStyleBold, StringAlignmentCenter, StringAlignmentCenter);
 
                 draw_text(g, pkg.name, px + 18, py + 50, card_w - 36, 26, 17.0f, Color(255, 248, 250, 252), FontStyleBold);
                 draw_text(g, pkg.description, px + 18, py + 78, card_w - 36, 22, 12.0f, Color(255, 148, 163, 184));
@@ -1081,8 +1144,8 @@ void change_pc_number(int delta) {
             current_num = std::atoi(g_state.pc_code.substr(3).c_str());
         }
         current_num += delta;
-        if (current_num < 1) current_num = 10;
-        if (current_num > 10) current_num = 1;
+        if (current_num < 1) current_num = 50;
+        if (current_num > 50) current_num = 1;
         std::ostringstream oss;
         oss << "PC-" << std::setfill('0') << std::setw(2) << current_num;
         g_state.pc_code = oss.str();

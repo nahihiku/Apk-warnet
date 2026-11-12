@@ -22,6 +22,10 @@
         isDark: localStorage.getItem('theme_dark') !== 'false',
         open: localStorage.getItem('sidebar_open') !== 'false',
         selected: localStorage.getItem('active_sidebar_tab') || 'Dashboard',
+        pcFilter: 'all',
+        showBatchPcModal: false,
+        showAddPcModal: false,
+        editPcId: null,
         editMemberId: null,
         editMenuId: null,
         editPkgId: null,
@@ -329,9 +333,13 @@
                             </div>
                             <h3 class="font-medium text-gray-600 dark:text-gray-400 mb-1 text-sm">Terminal PC Aktif</h3>
                             <p class="text-2xl font-bold text-gray-900 dark:text-gray-100 mono">
-                                <span id="kpi-active-pcs">{{ $activePcsCount }}</span> / {{ $pcs->count() }} PC
+                                <span id="kpi-active-pcs">{{ $activePcsCount }}</span> / <span id="kpi-total-pcs">{{ $pcs->count() }}</span> PC
                             </p>
-                            <p class="text-xs text-green-600 dark:text-green-400 mt-1">Klik untuk kontrol penuh PC</p>
+                            <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-1.5 flex items-center gap-1.5 flex-wrap">
+                                <span class="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-bold">{{ $regulerPcsCount }} Reguler</span>
+                                <span class="px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 font-bold">{{ $vipPcsCount }} VIP</span>
+                                <span class="px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 font-bold">{{ $vipPlusPcsCount }} VIP++</span>
+                            </p>
                         </div>
 
                         <div @click="setTab('Antrian Dapur')" class="cursor-pointer p-6 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm hover:shadow-md transition-shadow">
@@ -503,18 +511,61 @@
                 <!-- ========================================================= -->
                 <div x-show="selected === 'Terminal PC'" x-cloak>
                     <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 shadow-sm">
-                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
+                        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6 pb-6 border-b border-gray-200 dark:border-gray-800">
                             <div>
                                 <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
                                     Kontrol Penuh Seluruh Unit Terminal PC (Client C++)
                                 </h3>
                                 <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                    Pilih paket billing untuk membuka kunci terminal, tambahkan durasi, atau kirim pesan pop-up ke layar user.
+                                    Atur jumlah terminal PC, klasifikasikan tipe Reguler / VIP / VIP++, buka paket billing, atau kirim pesan pop-up ke layar user.
                                 </p>
                             </div>
-                            <span class="text-xs font-medium text-blue-600 dark:text-blue-400">
-                                Total {{ $pcs->count() }} Unit Terminal
-                            </span>
+
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <button type="button" @click="showBatchPcModal = true"
+                                        class="px-3.5 py-2 rounded-lg bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-700 text-xs font-semibold shadow-sm transition">
+                                    Atur Jumlah PC
+                                </button>
+                                <button type="button" @click="showAddPcModal = true"
+                                        class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition">
+                                    + Tambah PC Baru
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Filter Tabs: Semua, Reguler, VIP, VIP++ -->
+                        <div class="flex items-center gap-2 mb-6 overflow-x-auto pb-1">
+                            <button type="button" @click="pcFilter = 'all'"
+                                    :class="pcFilter === 'all'
+                                        ? 'bg-blue-600 text-white font-bold'
+                                        : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'"
+                                    class="px-3.5 py-1.5 rounded-lg text-xs transition">
+                                Semua Terminal ({{ $pcs->count() }})
+                            </button>
+                            <button type="button" @click="pcFilter = 'reguler'"
+                                    :class="pcFilter === 'reguler'
+                                        ? 'bg-blue-600 text-white font-bold'
+                                        : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'"
+                                    class="px-3.5 py-1.5 rounded-lg text-xs transition flex items-center gap-1.5">
+                                <span class="h-2 w-2 rounded-full bg-blue-500"></span>
+                                <span>Reguler ({{ $regulerPcsCount }})</span>
+                            </button>
+                            <button type="button" @click="pcFilter = 'vip'"
+                                    :class="pcFilter === 'vip'
+                                        ? 'bg-amber-600 text-white font-bold'
+                                        : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'"
+                                    class="px-3.5 py-1.5 rounded-lg text-xs transition flex items-center gap-1.5">
+                                <span class="h-2 w-2 rounded-full bg-amber-500"></span>
+                                <span>VIP ({{ $vipPcsCount }})</span>
+                            </button>
+                            <button type="button" @click="pcFilter = 'vip++'"
+                                    :class="pcFilter === 'vip++'
+                                        ? 'bg-purple-600 text-white font-bold'
+                                        : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'"
+                                    class="px-3.5 py-1.5 rounded-lg text-xs transition flex items-center gap-1.5">
+                                <span class="h-2 w-2 rounded-full bg-purple-500"></span>
+                                <span>VIP++ ({{ $vipPlusPcsCount }})</span>
+                            </button>
                         </div>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
@@ -522,29 +573,105 @@
                                 @php
                                     $rem = $pc->computeRemainingSeconds();
                                     $online = $pc->isOnline();
+                                    $tierStyles = match($pc->pc_type) {
+                                        'vip' => 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800/60',
+                                        'vip++' => 'bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800/60',
+                                        default => 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800/60',
+                                    };
                                 @endphp
                                 <div id="pc-card-{{ $pc->id }}"
+                                     x-show="pcFilter === 'all' || pcFilter === '{{ $pc->pc_type }}'"
                                      class="rounded-xl border p-4 transition-all flex flex-col justify-between overflow-hidden {{ $pc->is_locked ? 'border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-950/60' : 'border-blue-500/60 dark:border-blue-500/60 bg-blue-50/20 dark:bg-blue-950/20 shadow-sm' }}">
 
                                     <div>
-                                        <div class="flex items-center justify-between gap-2 mb-3">
-                                            <div class="flex items-center gap-2 min-w-0">
+                                        <div class="flex items-center justify-between gap-1 mb-2.5">
+                                            <div class="flex items-center gap-1.5 min-w-0 flex-wrap">
                                                 <span id="pc-badge-{{ $pc->id }}"
-                                                      class="px-2.5 py-1 rounded-md font-bold text-xs mono shrink-0 {{ $pc->is_locked ? 'bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-200' : 'bg-blue-600 text-white' }}">
+                                                      class="px-2 py-0.5 rounded-md font-bold text-xs mono shrink-0 {{ $pc->is_locked ? 'bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-200' : 'bg-blue-600 text-white' }}">
                                                     {{ $pc->pc_code }}
                                                 </span>
+
+                                                <span class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border {{ $tierStyles }} shrink-0">
+                                                    {{ strtoupper($pc->pc_type ?? 'reguler') }}
+                                                </span>
+
                                                 <span id="pc-online-{{ $pc->id }}"
-                                                      class="text-[10px] px-2 py-0.5 rounded font-medium truncate {{ $online ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400' }}">
+                                                      class="text-[10px] px-1.5 py-0.5 rounded font-medium truncate {{ $online ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400' }}">
                                                     {{ $online ? 'ONLINE' : 'STANDBY' }}
                                                 </span>
                                             </div>
 
-                                            <span id="pc-lock-label-{{ $pc->id }}"
-                                                  class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded shrink-0 {{ $pc->is_locked ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400' : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' }}">
-                                                {{ $pc->is_locked ? 'TERKUNCI' : 'AKTIF' }}
-                                            </span>
+                                            <div class="flex items-center gap-1 shrink-0">
+                                                <span id="pc-lock-label-{{ $pc->id }}"
+                                                      class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded {{ $pc->is_locked ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400' : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' }}">
+                                                    {{ $pc->is_locked ? 'TERKUNCI' : 'AKTIF' }}
+                                                </span>
+                                                <button type="button" title="Edit Terminal PC"
+                                                        @click="editPcId = (editPcId === {{ $pc->id }} ? null : {{ $pc->id }})"
+                                                        class="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+                                                    </svg>
+                                                </button>
+                                                @if($pc->is_locked)
+                                                    <form action="{{ route('kasir.pc.delete', $pc) }}" method="POST" onsubmit="return confirm('Hapus unit {{ $pc->pc_code }}?')">
+                                                        @csrf
+                                                        <button type="submit" title="Hapus Terminal PC"
+                                                                class="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/40 text-gray-400 hover:text-red-600">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                                <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                                                            </svg>
+                                                        </button>
+                                                    </form>
+                                                @endif
+                                            </div>
                                         </div>
 
+                                        <!-- Form Inline Edit PC -->
+                                        <form x-show="editPcId === {{ $pc->id }}" x-cloak
+                                              action="{{ route('kasir.pc.update', $pc) }}" method="POST"
+                                              class="p-3 mb-3 rounded-lg bg-gray-100 dark:bg-gray-900 border border-blue-500/50 space-y-2">
+                                            @csrf
+                                            <div class="text-[11px] font-bold text-blue-600 dark:text-blue-400 uppercase">Edit Terminal {{ $pc->pc_code }}</div>
+                                            <div class="grid grid-cols-2 gap-2">
+                                                <div>
+                                                    <label class="text-[10px] text-gray-500 block">Kode PC</label>
+                                                    <input type="text" name="pc_code" value="{{ $pc->pc_code }}" required
+                                                           class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 text-xs mono">
+                                                </div>
+                                                <div>
+                                                    <label class="text-[10px] text-gray-500 block">Jenis PC</label>
+                                                    <select name="pc_type" class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 text-xs font-semibold">
+                                                        <option value="reguler" {{ $pc->pc_type === 'reguler' ? 'selected' : '' }}>Reguler</option>
+                                                        <option value="vip" {{ $pc->pc_type === 'vip' ? 'selected' : '' }}>VIP</option>
+                                                        <option value="vip++" {{ $pc->pc_type === 'vip++' ? 'selected' : '' }}>VIP++</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div class="grid grid-cols-2 gap-2">
+                                                <div>
+                                                    <label class="text-[10px] text-gray-500 block">Nama Terminal</label>
+                                                    <input type="text" name="name" value="{{ $pc->name }}"
+                                                           class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 text-xs">
+                                                </div>
+                                                <div>
+                                                    <label class="text-[10px] text-gray-500 block">Tarif/Jam (Rp)</label>
+                                                    <input type="number" name="hourly_rate" value="{{ $pc->hourly_rate }}"
+                                                           class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 text-xs mono">
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label class="text-[10px] text-gray-500 block">Spesifikasi Hardware</label>
+                                                <input type="text" name="specs" value="{{ $pc->specs }}" placeholder="Contoh: i7 / RTX 4070 / 240Hz"
+                                                       class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 text-xs">
+                                            </div>
+                                            <div class="flex justify-end gap-1.5 pt-1">
+                                                <button type="button" @click="editPcId = null" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 text-[11px] text-gray-600 dark:text-gray-400">Batal</button>
+                                                <button type="submit" class="px-2.5 py-1 rounded bg-blue-600 text-white text-[11px] font-semibold">Simpan</button>
+                                            </div>
+                                        </form>
+
+                                        <!-- Info Box -->
                                         <div class="rounded-lg p-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 mb-3 space-y-1.5">
                                             <div class="flex justify-between items-center text-xs gap-2">
                                                 <span class="text-gray-500 dark:text-gray-400 shrink-0">User:</span>
@@ -552,6 +679,17 @@
                                                     {{ $pc->member ? $pc->member->name . ' (' . $pc->member->username . ')' : 'Belum Login' }}
                                                 </span>
                                             </div>
+                                            <div class="flex justify-between items-center text-xs gap-2">
+                                                <span class="text-gray-500 dark:text-gray-400 shrink-0">Tarif:</span>
+                                                <span class="font-semibold text-gray-700 dark:text-gray-300 mono text-right">
+                                                    Rp {{ number_format($pc->hourly_rate, 0, ',', '.') }}/jam
+                                                </span>
+                                            </div>
+                                            @if($pc->specs)
+                                                <div class="text-[10px] text-gray-500 dark:text-gray-400 truncate" title="{{ $pc->specs }}">
+                                                    {{ $pc->specs }}
+                                                </div>
+                                            @endif
                                             <div class="flex justify-between items-center text-xs gap-2">
                                                 <span class="text-gray-500 dark:text-gray-400 shrink-0">Saldo:</span>
                                                 <span id="pc-balance-{{ $pc->id }}" class="font-semibold text-green-600 dark:text-green-400 mono truncate text-right">
@@ -575,11 +713,26 @@
                                             <input type="hidden" name="action" value="unlock_package">
 
                                             <select name="package_id" class="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:border-blue-500 focus:outline-none">
-                                                @foreach($packages as $pkg)
-                                                    <option value="{{ $pkg->id }}">
-                                                        {{ $pkg->name }} (+{{ $pkg->duration_minutes }}m - Rp {{ number_format($pkg->price, 0, ',', '.') }})
-                                                    </option>
-                                                @endforeach
+                                                @php
+                                                    $matchingPkgs = $packages->filter(fn($p) => in_array($p->pc_type, ['all', $pc->pc_type]));
+                                                    $otherPkgs = $packages->reject(fn($p) => in_array($p->pc_type, ['all', $pc->pc_type]));
+                                                @endphp
+                                                <optgroup label="Paket Sesuai ({{ strtoupper($pc->pc_type) }})">
+                                                    @foreach($matchingPkgs as $pkg)
+                                                        <option value="{{ $pkg->id }}">
+                                                            {{ $pkg->name }} (+{{ $pkg->duration_minutes }}m - Rp {{ number_format($pkg->price, 0, ',', '.') }})
+                                                        </option>
+                                                    @endforeach
+                                                </optgroup>
+                                                @if($otherPkgs->count() > 0)
+                                                    <optgroup label="Paket Terminal Lain">
+                                                        @foreach($otherPkgs as $pkg)
+                                                            <option value="{{ $pkg->id }}">
+                                                                [{{ strtoupper($pkg->pc_type) }}] {{ $pkg->name }} (+{{ $pkg->duration_minutes }}m - Rp {{ number_format($pkg->price, 0, ',', '.') }})
+                                                            </option>
+                                                        @endforeach
+                                                    </optgroup>
+                                                @endif
                                             </select>
 
                                             <select name="member_id" class="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg px-2.5 py-1.5 text-xs text-gray-700 dark:text-gray-300 focus:border-blue-500 focus:outline-none">
@@ -642,6 +795,149 @@
                                 </div>
                             @endforeach
                         </div>
+                    </div>
+                </div>
+
+                <!-- ========================================================= -->
+                <!-- MODAL: ATUR JUMLAH TERMINAL PC (BATCH SIZER)              -->
+                <!-- ========================================================= -->
+                <div x-show="showBatchPcModal" x-cloak
+                     class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+                    <div @click.away="showBatchPcModal = false"
+                         class="w-full max-w-lg rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-6 shadow-2xl space-y-4">
+                        <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 pb-3">
+                            <h4 class="text-base font-bold text-gray-900 dark:text-gray-100">
+                                Atur Jumlah & Komposisi Terminal PC
+                            </h4>
+                            <button @click="showBatchPcModal = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                            </button>
+                        </div>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">
+                            Tentukan berapa unit PC yang tersedia di warnet untuk masing-masing tier (Reguler, VIP, VIP++). Sistem akan otomatis membuat dan memberi nomor PC secara berurutan.
+                        </p>
+
+                        <form action="{{ route('kasir.pc.batch') }}" method="POST" class="space-y-4">
+                            @csrf
+                            <div class="grid grid-cols-3 gap-3">
+                                <div class="p-3 rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50/30 dark:bg-blue-950/20">
+                                    <label class="text-[11px] font-bold text-blue-600 dark:text-blue-400 block mb-1">Unit Reguler</label>
+                                    <input type="number" name="count_reguler" value="{{ $regulerPcsCount }}" min="0" max="50" required
+                                           class="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg px-2.5 py-1.5 text-sm font-bold mono">
+                                    <span class="text-[10px] text-gray-500 block mt-1">Tarif default: Rp 5.000/j</span>
+                                </div>
+                                <div class="p-3 rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50/30 dark:bg-amber-950/20">
+                                    <label class="text-[11px] font-bold text-amber-600 dark:text-amber-400 block mb-1">Unit VIP</label>
+                                    <input type="number" name="count_vip" value="{{ $vipPcsCount }}" min="0" max="50" required
+                                           class="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg px-2.5 py-1.5 text-sm font-bold mono">
+                                    <span class="text-[10px] text-gray-500 block mt-1">Tarif default: Rp 8.000/j</span>
+                                </div>
+                                <div class="p-3 rounded-xl border border-purple-200 dark:border-purple-900/50 bg-purple-50/30 dark:bg-purple-950/20">
+                                    <label class="text-[11px] font-bold text-purple-600 dark:text-purple-400 block mb-1">Unit VIP++</label>
+                                    <input type="number" name="count_vip_plus" value="{{ $vipPlusPcsCount }}" min="0" max="50" required
+                                           class="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg px-2.5 py-1.5 text-sm font-bold mono">
+                                    <span class="text-[10px] text-gray-500 block mt-1">Tarif default: Rp 12.000/j</span>
+                                </div>
+                            </div>
+
+                            <div class="space-y-2">
+                                <label class="text-xs font-semibold text-gray-700 dark:text-gray-300">Spesifikasi Default Tiap Jenis PC:</label>
+                                <div class="space-y-1.5 text-xs">
+                                    <input type="text" name="specs_reguler" value="Core i5-12400F / RTX 3060 12GB / RAM 16GB / Monitor 165Hz"
+                                           placeholder="Spek Reguler" class="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-1.5 text-xs">
+                                    <input type="text" name="specs_vip" value="Core i7-13700F / RTX 4070 12GB / RAM 32GB / Monitor 240Hz Curved"
+                                           placeholder="Spek VIP" class="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-1.5 text-xs">
+                                    <input type="text" name="specs_vip_plus" value="Core i9-14900K / RTX 4090 24GB / RAM 64GB / Monitor 360Hz ROG + Kursi Gaming Titan"
+                                           placeholder="Spek VIP++" class="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-1.5 text-xs">
+                                </div>
+                            </div>
+
+                            <div class="flex items-center gap-2 p-3 rounded-lg bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700">
+                                <input type="checkbox" name="trim_excess" value="1" id="trim_excess_check" checked
+                                       class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                <label for="trim_excess_check" class="text-xs text-gray-700 dark:text-gray-300 cursor-pointer">
+                                    Pangkas unit PC lama di atas total baru jika tidak sedang aktif digunakan
+                                </label>
+                            </div>
+
+                            <div class="flex justify-end gap-2 pt-2">
+                                <button type="button" @click="showBatchPcModal = false"
+                                        class="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-xs font-medium text-gray-700 dark:text-gray-300">
+                                    Batal
+                                </button>
+                                <button type="submit"
+                                        class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm">
+                                    Terapkan Jumlah Terminal PC
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- ========================================================= -->
+                <!-- MODAL: TAMBAH TERMINAL PC SATUAN                          -->
+                <!-- ========================================================= -->
+                <div x-show="showAddPcModal" x-cloak
+                     class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+                    <div @click.away="showAddPcModal = false"
+                         class="w-full max-w-md rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-6 shadow-2xl space-y-4">
+                        <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 pb-3">
+                            <h4 class="text-base font-bold text-gray-900 dark:text-gray-100">
+                                Tambah Terminal PC Baru
+                            </h4>
+                            <button @click="showAddPcModal = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                            </button>
+                        </div>
+
+                        <form action="{{ route('kasir.pc.store') }}" method="POST" class="space-y-3">
+                            @csrf
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="text-[11px] font-semibold text-gray-500 uppercase block mb-1">Kode Terminal</label>
+                                    <input type="text" name="pc_code" placeholder="Contoh: PC-11" required
+                                           class="w-full bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 text-xs font-bold mono">
+                                </div>
+                                <div>
+                                    <label class="text-[11px] font-semibold text-gray-500 uppercase block mb-1">Jenis PC</label>
+                                    <select name="pc_type" required class="w-full bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 text-xs font-bold">
+                                        <option value="reguler">Reguler</option>
+                                        <option value="vip">VIP</option>
+                                        <option value="vip++">VIP++</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="text-[11px] font-semibold text-gray-500 uppercase block mb-1">Nama Terminal</label>
+                                    <input type="text" name="name" placeholder="Opsional (Otomatis)"
+                                           class="w-full bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 text-xs">
+                                </div>
+                                <div>
+                                    <label class="text-[11px] font-semibold text-gray-500 uppercase block mb-1">Tarif/Jam (Rp)</label>
+                                    <input type="number" name="hourly_rate" placeholder="Contoh: 5000"
+                                           class="w-full bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 text-xs mono">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="text-[11px] font-semibold text-gray-500 uppercase block mb-1">Spesifikasi Hardware</label>
+                                <input type="text" name="specs" placeholder="Contoh: Core i5 / RTX 3060 / 165Hz"
+                                       class="w-full bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 text-xs">
+                            </div>
+
+                            <div class="flex justify-end gap-2 pt-2">
+                                <button type="button" @click="showAddPcModal = false"
+                                        class="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-xs font-medium text-gray-700 dark:text-gray-300">
+                                    Batal
+                                </button>
+                                <button type="submit"
+                                        class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm">
+                                    Simpan Terminal Baru
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
 
@@ -968,16 +1264,22 @@
 
                                 <form action="{{ route('kasir.package.store') }}" method="POST" class="space-y-3">
                                     @csrf
-                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                         <input type="text" name="name" placeholder="Nama Paket (Contoh: Paket 4 Jam)" required
                                                class="bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none">
                                         <input type="number" name="duration_minutes" placeholder="Durasi (Menit)" value="240" required
                                                class="bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-900 dark:text-gray-100 mono focus:border-blue-500 focus:outline-none">
+                                        <select name="pc_type" class="bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-900 dark:text-gray-100 font-semibold focus:border-blue-500 focus:outline-none">
+                                            <option value="all">Semua PC (Universal)</option>
+                                            <option value="reguler">Khusus PC Reguler</option>
+                                            <option value="vip">Khusus PC VIP</option>
+                                            <option value="vip++">Khusus PC VIP++</option>
+                                        </select>
                                     </div>
                                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                         <input type="number" name="price" placeholder="Harga Paket (Rp)" value="22000" required
                                                class="bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-900 dark:text-gray-100 mono focus:border-blue-500 focus:outline-none">
-                                        <input type="text" name="description" placeholder="Keterangan Singkat" value="Paket reguler"
+                                        <input type="text" name="description" placeholder="Keterangan Singkat" value="Paket billing warnet"
                                                class="bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none">
                                     </div>
                                     <button type="submit" class="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition shadow-sm">
@@ -992,12 +1294,23 @@
 
                                 <div class="divide-y divide-gray-200 dark:divide-gray-800">
                                     @foreach($packages as $pkg)
+                                        @php
+                                            $pkgTierStyles = match($pkg->pc_type) {
+                                                'vip' => 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800',
+                                                'vip++' => 'bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800',
+                                                'reguler' => 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800',
+                                                default => 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700',
+                                            };
+                                        @endphp
                                         <div class="py-4 space-y-3">
                                             <div class="flex items-start justify-between gap-4">
                                                 <div>
-                                                    <p class="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                                                        {{ $pkg->name }}
+                                                    <p class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2 flex-wrap">
+                                                        <span>{{ $pkg->name }}</span>
                                                         <span class="text-xs font-normal text-gray-500">({{ $pkg->duration_minutes }} Menit)</span>
+                                                        <span class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border {{ $pkgTierStyles }}">
+                                                            {{ $pkg->pc_type === 'all' ? 'SEMUA PC' : strtoupper($pkg->pc_type) }}
+                                                        </span>
                                                     </p>
                                                     <p class="text-xs text-gray-500">{{ $pkg->description }}</p>
                                                     <p class="text-sm font-bold text-blue-600 dark:text-blue-400 mono mt-0.5">
@@ -1043,7 +1356,7 @@
                                                   class="p-3.5 rounded-lg bg-gray-50 dark:bg-gray-950 border border-blue-500/40 space-y-2.5">
                                                 @csrf
                                                 <div class="text-xs font-semibold text-blue-600 dark:text-blue-400">Edit Paket: {{ $pkg->name }}</div>
-                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                                                     <div>
                                                         <label class="text-[10px] text-gray-500 uppercase">Nama Paket</label>
                                                         <input type="text" name="name" value="{{ $pkg->name }}" required
@@ -1053,6 +1366,15 @@
                                                         <label class="text-[10px] text-gray-500 uppercase">Durasi (Menit)</label>
                                                         <input type="number" name="duration_minutes" value="{{ $pkg->duration_minutes }}" required
                                                                class="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg px-2.5 py-1.5 text-xs text-gray-900 dark:text-gray-100 mono">
+                                                    </div>
+                                                    <div>
+                                                        <label class="text-[10px] text-gray-500 uppercase">Jenis PC</label>
+                                                        <select name="pc_type" class="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg px-2.5 py-1.5 text-xs font-semibold">
+                                                            <option value="all" {{ $pkg->pc_type === 'all' ? 'selected' : '' }}>Semua PC</option>
+                                                            <option value="reguler" {{ $pkg->pc_type === 'reguler' ? 'selected' : '' }}>Reguler</option>
+                                                            <option value="vip" {{ $pkg->pc_type === 'vip' ? 'selected' : '' }}>VIP</option>
+                                                            <option value="vip++" {{ $pkg->pc_type === 'vip++' ? 'selected' : '' }}>VIP++</option>
+                                                        </select>
                                                     </div>
                                                 </div>
                                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -1353,10 +1675,12 @@
 
                 const revEl = document.getElementById('kpi-revenue');
                 const actEl = document.getElementById('kpi-active-pcs');
+                const totEl = document.getElementById('kpi-total-pcs');
                 const kitEl = document.getElementById('kpi-kitchen');
                 const qrisEl = document.getElementById('kpi-qris');
                 if (revEl) revEl.textContent = formatRupiah(data.total_revenue);
                 if (actEl) actEl.textContent = data.active_pcs;
+                if (totEl && data.total_pcs) totEl.textContent = data.total_pcs;
                 if (kitEl) kitEl.textContent = data.kitchen_queue;
                 if (qrisEl) qrisEl.textContent = data.pending_qris;
 

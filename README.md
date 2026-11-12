@@ -10,7 +10,7 @@ Sistem manajemen warnet modern terintegrasi yang terdiri dari Server Kasir & Lay
    - Bahasa: C++17 Native (Win32 API, GDI+, WinHTTP).
    - Tanpa runtime atau DLL pihak ketiga, menghasilkan file executable ringan (sekitar 230 KB).
    - Fitur:
-     - Tampilan Lockscreen dengan form login member dan preview tarif paket.
+     - Tampilan Lockscreen dengan form login member, badge jenis PC (Reguler, VIP, VIP++), dan preview spesifikasi hardware.
      - Mode Fullscreen Lock (F11 untuk beralih mode).
      - Tambah paket billing langsung dari PC (potong saldo member atau bayar QRIS).
      - Pemesanan makanan dan minuman (F&B) dengan catatan dapur.
@@ -23,12 +23,15 @@ Sistem manajemen warnet modern terintegrasi yang terdiri dari Server Kasir & Lay
    - Database: SQLite (default) / MySQL.
    - Port default: 8088 (http://127.0.0.1:8088).
    - Fitur:
-     - Monitoring status 10 terminal PC secara real-time (interval 2 detik).
+     - Monitoring dan kontrol seluruh terminal PC secara real-time (interval 2 detik).
+     - Mendukung 3 jenis/tier PC: Reguler, VIP, dan VIP++ dengan tarif dan spesifikasi berbeda.
+     - Atur jumlah terminal PC secara fleksibel: tambah PC satuan atau generate jumlah PC secara massal (batch sizer).
+     - Filter terminal PC berdasarkan jenis (Semua, Reguler, VIP, VIP++).
      - Full kontrol PC: buka paket billing, tambah waktu (+30m, +1 jam), kunci PC, dan kirim pesan pop-up ke layar PC.
      - Layar Antrian Dapur / KDS (3 kolom: Pesanan Baru, Sedang Dimasak, Siap Diantar).
      - Kasir F&B & Konfirmasi pembayaran QRIS.
      - Manajemen akun member: isi saldo, tambah waktu simpanan, edit data member, dan registrasi member baru.
-     - Manajemen katalog: tambah/edit menu makanan/minuman dan paket billing.
+     - Manajemen katalog: tambah/edit menu makanan/minuman dan paket billing bertingkat per jenis PC.
 
 ---
 

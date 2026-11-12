@@ -7,6 +7,7 @@ struct BillingPackage {
     int id = 0;
     std::string name;
     int duration_minutes = 0;
+    std::string pc_type = "all"; // "all", "reguler", "vip", "vip++"
     long long price = 0;
     std::string description;
 };
@@ -39,6 +40,9 @@ struct ClientState {
     std::string server_host = "127.0.0.1";
     int server_port = 8088;
     std::string pc_code = "PC-01";
+    std::string pc_type = "reguler"; // "reguler", "vip", "vip++"
+    long long hourly_rate = 5000;
+    std::string specs = "";
 
     // Connection & Session
     bool server_online = false;

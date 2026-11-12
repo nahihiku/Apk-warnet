@@ -42,13 +42,33 @@ class DatabaseSeeder extends Seeder
             Member::updateOrCreate(['username' => $m['username']], $m);
         }
 
-        // 2. Seed 10 PC Clients (PC-01 to PC-10)
+        // 2. Seed PC Clients (PC-01 to PC-10) with 3 Tiers: reguler, vip, vip++
         for ($i = 1; $i <= 10; $i++) {
             $code = sprintf('PC-%02d', $i);
+            if ($i <= 6) {
+                $type = 'reguler';
+                $rate = 5000;
+                $name = "Terminal Reguler #$i";
+                $specs = "Core i5-12400F / RTX 3060 12GB / RAM 16GB / Monitor 165Hz";
+            } elseif ($i <= 9) {
+                $type = 'vip';
+                $rate = 8000;
+                $name = "Terminal VIP #$i";
+                $specs = "Core i7-13700F / RTX 4070 12GB / RAM 32GB / Monitor 240Hz Curved";
+            } else {
+                $type = 'vip++';
+                $rate = 12000;
+                $name = "Terminal VIP++ Sultan #$i";
+                $specs = "Core i9-14900K / RTX 4090 24GB / RAM 64GB / Monitor 360Hz ROG + Kursi Gaming Titan";
+            }
+
             PcClient::updateOrCreate(
                 ['pc_code' => $code],
                 [
-                    'name' => "Terminal VIP #$i",
+                    'name' => $name,
+                    'pc_type' => $type,
+                    'hourly_rate' => $rate,
+                    'specs' => $specs,
                     'status' => 'locked',
                     'is_locked' => true,
                     'remaining_seconds_cache' => 0,
@@ -56,14 +76,25 @@ class DatabaseSeeder extends Seeder
             );
         }
 
-        // 3. Seed Billing Packages
+        // 3. Seed Billing Packages (Tiered: reguler, vip, vip++, all)
         $packages = [
-            ['name' => 'Paket Reguler 1 Jam', 'duration_minutes' => 60, 'price' => 7000, 'description' => '1 Jam akses penuh PC Gaming VIP'],
-            ['name' => 'Paket Hemat 2 Jam', 'duration_minutes' => 120, 'price' => 13000, 'description' => 'Lebih hemat untuk sesi 2 jam'],
-            ['name' => 'Paket Gamer 3 Jam', 'duration_minutes' => 180, 'price' => 18000, 'description' => 'Paket favorit mabar 3 jam'],
-            ['name' => 'Paket Push Rank 5 Jam', 'duration_minutes' => 300, 'price' => 28000, 'description' => 'Puas main 5 jam non-stop'],
-            ['name' => 'Paket Sultan 10 Jam', 'duration_minutes' => 600, 'price' => 50000, 'description' => 'Waktu bisa disimpan di akun member'],
-            ['name' => 'Paket Kalong Malam', 'duration_minutes' => 420, 'price' => 25000, 'description' => '7 Jam paket spesial begadang'],
+            // Reguler Tier
+            ['name' => 'Paket Reguler 1 Jam', 'duration_minutes' => 60, 'pc_type' => 'reguler', 'price' => 5000, 'description' => '1 Jam akses PC Reguler (i5 + RTX 3060)'],
+            ['name' => 'Paket Reguler 3 Jam', 'duration_minutes' => 180, 'pc_type' => 'reguler', 'price' => 13000, 'description' => 'Hemat 3 jam bermain di PC Reguler'],
+            ['name' => 'Paket Reguler 5 Jam', 'duration_minutes' => 300, 'pc_type' => 'reguler', 'price' => 20000, 'description' => 'Paket santai 5 jam PC Reguler'],
+
+            // VIP Tier
+            ['name' => 'Paket VIP 1 Jam', 'duration_minutes' => 60, 'pc_type' => 'vip', 'price' => 8000, 'description' => '1 Jam akses PC VIP (i7 + RTX 4070 + 240Hz)'],
+            ['name' => 'Paket VIP 3 Jam', 'duration_minutes' => 180, 'pc_type' => 'vip', 'price' => 22000, 'description' => 'Paket favorit pro gamer 3 jam PC VIP'],
+            ['name' => 'Paket VIP 5 Jam', 'duration_minutes' => 300, 'pc_type' => 'vip', 'price' => 35000, 'description' => '5 Jam turnamen & mabar performa tinggi'],
+
+            // VIP++ Tier
+            ['name' => 'Paket VIP++ 1 Jam', 'duration_minutes' => 60, 'pc_type' => 'vip++', 'price' => 12000, 'description' => '1 Jam Sultan PC VIP++ (i9 + RTX 4090 + 360Hz)'],
+            ['name' => 'Paket VIP++ 3 Jam', 'duration_minutes' => 180, 'pc_type' => 'vip++', 'price' => 32000, 'description' => '3 Jam gaming ultra-high end setup sultan'],
+            ['name' => 'Paket VIP++ 5 Jam', 'duration_minutes' => 300, 'pc_type' => 'vip++', 'price' => 50000, 'description' => '5 Jam VIP++ non-stop setup terkencang'],
+
+            // All Tiers / Universal
+            ['name' => 'Paket Kalong Malam (All PC)', 'duration_minutes' => 420, 'pc_type' => 'all', 'price' => 25000, 'description' => '7 Jam paket begadang berlaku di semua terminal'],
         ];
 
         foreach ($packages as $pkg) {

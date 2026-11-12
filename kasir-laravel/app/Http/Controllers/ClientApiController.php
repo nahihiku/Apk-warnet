@@ -17,11 +17,25 @@ class ClientApiController extends Controller
 {
     public function catalog(Request $request)
     {
-        $packages = BillingPackage::where('is_active', true)->orderBy('price')->get();
+        $pcCode = $request->input('pc_code');
+        $pcType = 'all';
+        if ($pcCode) {
+            $pc = PcClient::where('pc_code', $pcCode)->first();
+            if ($pc && $pc->pc_type) {
+                $pcType = $pc->pc_type;
+            }
+        }
+
+        $packagesQuery = BillingPackage::where('is_active', true);
+        if ($pcType !== 'all') {
+            $packagesQuery->whereIn('pc_type', ['all', $pcType]);
+        }
+        $packages = $packagesQuery->orderBy('price')->get();
         $menus = FoodMenu::where('is_available', true)->orderBy('category')->orderBy('name')->get();
 
         return response()->json([
             'success' => true,
+            'pc_type' => $pcType,
             'packages' => $packages,
             'menus' => $menus,
         ]);
@@ -95,6 +109,9 @@ class ClientApiController extends Controller
         return response()->json([
             'success' => true,
             'pc_code' => $pc->pc_code,
+            'pc_type' => $pc->pc_type ?? 'reguler',
+            'hourly_rate' => (int) ($pc->hourly_rate ?? 5000),
+            'specs' => $pc->specs ?? '',
             'is_locked' => (bool) $pc->is_locked,
             'status' => $pc->status,
             'remaining_seconds' => (int) $remaining,
@@ -174,6 +191,14 @@ class ClientApiController extends Controller
 
         $pc = PcClient::with('member')->where('pc_code', $pcCode)->firstOrFail();
         $pkg = BillingPackage::findOrFail($packageId);
+
+        if ($pkg->pc_type !== 'all' && $pkg->pc_type !== ($pc->pc_type ?? 'reguler')) {
+            return response()->json([
+                'success' => false,
+                'message' => "Paket ini khusus untuk terminal " . strtoupper($pkg->pc_type) . " (PC ini adalah " . strtoupper($pc->pc_type ?? 'reguler') . ")!",
+            ], 400);
+        }
+
         $addSeconds = $pkg->duration_minutes * 60;
 
         if ($paymentMethod === 'balance') {
