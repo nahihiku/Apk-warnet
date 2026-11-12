@@ -28,10 +28,13 @@ set CLIENT_EXE=%CLIENT_DIR%\WarnetClient.exe
 set CONFIG_FILE=%CLIENT_DIR%\client_config.ini
 
 if not exist "%CLIENT_EXE%" (
-    echo [INFO] File WarnetClient.exe belum ditemukan. Menjalankan kompilasi otomatis...
-    call "%CLIENT_DIR%\build.bat"
+    if exist "%CLIENT_DIR%\build.bat" (
+        echo [INFO] File WarnetClient.exe belum ditemukan. Menjalankan kompilasi otomatis...
+        call "%CLIENT_DIR%\build.bat"
+    )
     if not exist "%CLIENT_EXE%" (
-        echo [ERROR] Kompilasi gagal. Pastikan MinGW g++ terpasang di sistem.
+        echo [ERROR] File WarnetClient.exe tidak ditemukan di %CLIENT_DIR%.
+        echo         Unduh dari Server Kasir ^(/download/client^) atau salin WarnetClient.exe ke folder ini.
         pause
         exit /b 1
     )
@@ -40,21 +43,36 @@ if not exist "%CLIENT_EXE%" (
 echo [OK] File eksekutif client terverifikasi: %CLIENT_EXE%
 echo.
 
-:: 2. Tanya Konfigurasi Stasiun PC & Server Kasir
+:: 2. Tanya Konfigurasi Stasiun PC & Server Kasir (baca nilai client_config.ini jika sudah ada)
+set DEFAULT_PC=PC-01
+set DEFAULT_HOST=127.0.0.1
+set DEFAULT_PORT=8088
+
+if exist "%CONFIG_FILE%" (
+    for /f "usebackq tokens=1,2 delims==" %%A in ("%CONFIG_FILE%") do (
+        if /i "%%A"=="pc_code" if not "%%B"=="" set DEFAULT_PC=%%B
+        if /i "%%A"=="server_host" if not "%%B"=="" set DEFAULT_HOST=%%B
+        if /i "%%A"=="server_port" if not "%%B"=="" set DEFAULT_PORT=%%B
+    )
+)
+
 echo ---------------------------------------------------------------------
 echo PENGATURAN IDENTITAS TERMINAL PC & SERVER KASIR
 echo ---------------------------------------------------------------------
-set DEFAULT_PC=PC-01
-set /p USER_PC="Masukkan Kode Terminal PC (contoh: PC-01, PC-02) [Default %DEFAULT_PC%]: "
-if "%USER_PC%"=="" set USER_PC=%DEFAULT_PC%
+if /i "%~1"=="/silent" (
+    set USER_PC=%DEFAULT_PC%
+    set USER_HOST=%DEFAULT_HOST%
+    set USER_PORT=%DEFAULT_PORT%
+) else (
+    set /p USER_PC="Masukkan Kode Terminal PC (contoh: PC-01, PC-08) [Default %DEFAULT_PC%]: "
+    if "!USER_PC!"=="" set USER_PC=%DEFAULT_PC%
 
-set DEFAULT_HOST=127.0.0.1
-set /p USER_HOST="Masukkan Alamat IP Server Kasir (LAN) [Default %DEFAULT_HOST%]: "
-if "%USER_HOST%"=="" set USER_HOST=%DEFAULT_HOST%
+    set /p USER_HOST="Masukkan Alamat IP Server Kasir (LAN/VM) [Default %DEFAULT_HOST%]: "
+    if "!USER_HOST!"=="" set USER_HOST=%DEFAULT_HOST%
 
-set DEFAULT_PORT=8088
-set /p USER_PORT="Masukkan Port Server Kasir [Default %DEFAULT_PORT%]: "
-if "%USER_PORT%"=="" set USER_PORT=%DEFAULT_PORT%
+    set /p USER_PORT="Masukkan Port Server Kasir [Default %DEFAULT_PORT%]: "
+    if "!USER_PORT!"=="" set USER_PORT=%DEFAULT_PORT%
+)
 
 :: Simpan ke client_config.ini
 (
