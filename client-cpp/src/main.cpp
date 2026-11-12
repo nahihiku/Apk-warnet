@@ -33,10 +33,16 @@ std::string g_food_category_filter = "all"; // "all", "makanan", "minuman", "sna
 bool g_fullscreen_lock_mode = false; // Toggleable with F11 so user can test comfortably
 
 // Form Inputs
-int g_focused_input = 0; // 0: none, 1: username, 2: password, 3: food_notes, 4: server_host
+int g_focused_input = 0; // 0: none, 1: username, 2: password, 3: food_notes, 10: cfg_pc, 11: cfg_host, 12: cfg_port
 std::string g_input_username = "sultan01";
 std::string g_input_password = "password";
 std::string g_input_food_notes = "";
+
+// PC Station Config Modal (Admin / Teknisi Warnet - Shortcut F2)
+bool g_show_config_modal = false;
+std::string g_cfg_pc_code = "PC-01";
+std::string g_cfg_server_host = "127.0.0.1";
+std::string g_cfg_server_port = "8088";
 
 // QRIS Modal State
 bool g_show_qris_modal = false;
@@ -226,6 +232,107 @@ void sync_heartbeat() {
     }
 
     if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
+}
+
+// Local Configuration (client_config.ini)
+std::string get_config_path() {
+    char exePath[MAX_PATH];
+    GetModuleFileNameA(NULL, exePath, MAX_PATH);
+    std::string path(exePath);
+    size_t pos = path.find_last_of("\\/");
+    if (pos != std::string::npos) {
+        return path.substr(0, pos + 1) + "client_config.ini";
+    }
+    return "client_config.ini";
+}
+
+void load_client_config() {
+    std::string iniPath = get_config_path();
+    char bufHost[256] = {0};
+    char bufPort[64] = {0};
+    char bufPc[64] = {0};
+
+    GetPrivateProfileStringA("Client", "server_host", "127.0.0.1", bufHost, sizeof(bufHost), iniPath.c_str());
+    GetPrivateProfileStringA("Client", "server_port", "8088", bufPort, sizeof(bufPort), iniPath.c_str());
+    GetPrivateProfileStringA("Client", "pc_code", "PC-01", bufPc, sizeof(bufPc), iniPath.c_str());
+
+    int port = std::atoi(bufPort);
+    if (port <= 0) port = 8088;
+    std::string pc = bufPc;
+    if (pc.empty()) pc = "PC-01";
+    std::string host = bufHost;
+    if (host.empty()) host = "127.0.0.1";
+
+    {
+        std::lock_guard<std::mutex> lock(g_state.mtx);
+        g_state.server_host = host;
+        g_state.server_port = port;
+        g_state.pc_code = pc;
+    }
+
+    g_cfg_server_host = host;
+    g_cfg_server_port = std::to_string(port);
+    g_cfg_pc_code = pc;
+
+    WritePrivateProfileStringA("Client", "server_host", host.c_str(), iniPath.c_str());
+    WritePrivateProfileStringA("Client", "server_port", std::to_string(port).c_str(), iniPath.c_str());
+    WritePrivateProfileStringA("Client", "pc_code", pc.c_str(), iniPath.c_str());
+}
+
+void save_client_config(const std::string& pc, const std::string& host, int port) {
+    std::string iniPath = get_config_path();
+    WritePrivateProfileStringA("Client", "server_host", host.c_str(), iniPath.c_str());
+    WritePrivateProfileStringA("Client", "server_port", std::to_string(port).c_str(), iniPath.c_str());
+    WritePrivateProfileStringA("Client", "pc_code", pc.c_str(), iniPath.c_str());
+
+    {
+        std::lock_guard<std::mutex> lock(g_state.mtx);
+        g_state.server_host = host;
+        g_state.server_port = port;
+        g_state.pc_code = pc;
+        g_state.active_orders.clear();
+        for (auto& m : g_state.menu_items) m.cart_qty = 0;
+    }
+
+    g_cfg_server_host = host;
+    g_cfg_server_port = std::to_string(port);
+    g_cfg_pc_code = pc;
+
+    show_toast("Konfigurasi tersimpan ke client_config.ini! Menghubungkan ke " + pc);
+    std::thread([]() {
+        sync_catalog_from_server();
+        sync_heartbeat();
+    }).detach();
+}
+
+void open_config_modal() {
+    {
+        std::lock_guard<std::mutex> lock(g_state.mtx);
+        g_cfg_pc_code = g_state.pc_code;
+        g_cfg_server_host = g_state.server_host;
+        g_cfg_server_port = std::to_string(g_state.server_port);
+    }
+    g_show_config_modal = true;
+    g_focused_input = 10;
+    if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
+}
+
+void close_config_modal() {
+    g_show_config_modal = false;
+    g_focused_input = 0;
+    if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
+}
+
+void apply_and_save_config() {
+    std::string pc = g_cfg_pc_code;
+    std::string host = g_cfg_server_host;
+    int port = std::atoi(g_cfg_server_port.c_str());
+    if (pc.empty()) pc = "PC-01";
+    if (host.empty()) host = "127.0.0.1";
+    if (port <= 0) port = 8088;
+
+    save_client_config(pc, host, port);
+    close_config_modal();
 }
 
 void perform_login() {
@@ -579,6 +686,27 @@ void render_ui(HDC hdc, int width, int height) {
     );
     g.FillRectangle(&accentBar, 0, 0, width, 4);
 
+    // Common Tier Attributes
+    Color tierCol = Color(255, 34, 211, 238);
+    Color tierBgCol = Color(240, 15, 23, 42);
+    std::string tierTitle = "REGULER";
+    std::string tierHeading = "TIER: REGULER GAMING";
+    std::string tierDesc = "Standar Kompetitif iCafe • Layar 165Hz";
+
+    if (pc_type == "vip") {
+        tierCol = Color(255, 251, 191, 36);
+        tierBgCol = Color(245, 26, 20, 10);
+        tierTitle = "VIP";
+        tierHeading = "TIER: VIP ESPORTS STATION";
+        tierDesc = "High-End Gaming Rig • Layar 240Hz Curved";
+    } else if (pc_type == "vip++") {
+        tierCol = Color(255, 216, 180, 254);
+        tierBgCol = Color(245, 24, 15, 35);
+        tierTitle = "VIP++";
+        tierHeading = "TIER: VIP++ SULTAN LOUNGE";
+        tierDesc = "Ultimate Monster Rig • 360Hz Display + Sofa Gaming";
+    }
+
     if (is_locked) {
         // =====================================================
         // MODE 1: LOCK SCREEN (UKIKURA NATIVE iCAFE LOCKSCREEN)
@@ -598,74 +726,76 @@ void render_ui(HDC hdc, int width, int height) {
 
         // Station Badge
         SolidBrush cyanBadge(Color(40, 6, 182, 212));
-        fill_round_rect(g, &cyanBadge, pad + 30, pad + 28, 170, 34, 8);
-        draw_text(g, "UKIKURA iCAFE PRO", pad + 42, pad + 28, 150, 34, 12.0f, Color(255, 34, 211, 238), FontStyleBold);
+        fill_round_rect(g, &cyanBadge, pad + 24, pad + 24, 150, 32, 8);
+        draw_text(g, "UKIKURA iCAFE PRO", pad + 24, pad + 24, 150, 32, 11.5f, Color(255, 34, 211, 238), FontStyleBold, StringAlignmentCenter);
 
         // Server Status Badge
         Color statusCol = server_online ? Color(255, 16, 185, 129) : Color(255, 239, 68, 68);
         SolidBrush statusBg(server_online ? Color(35, 16, 185, 129) : Color(35, 239, 68, 68));
-        fill_round_rect(g, &statusBg, pad + 215, pad + 28, 220, 34, 8);
-        draw_text(g, server_online ? "SERVER KASIR ONLINE" : "SERVER KASIR OFFLINE",
-                  pad + 225, pad + 28, 200, 34, 11.5f, statusCol, FontStyleBold);
+        fill_round_rect(g, &statusBg, pad + 182, pad + 24, 210, 32, 8);
+        draw_text(g, server_online ? "KASIR ONLINE (LAN)" : "KASIR OFFLINE",
+                  pad + 182, pad + 24, 210, 32, 11.0f, statusCol, FontStyleBold, StringAlignmentCenter);
+
+        // PC Station Setup Button (Admin / Technician Shortcut F2)
+        draw_button(g, pad + left_w - 170, pad + 24, 146, 32, "Pengaturan PC [F2]",
+                    Color(255, 30, 41, 59), Color(255, 203, 213, 225), "open_config_modal", 0, 8, 11.0f);
 
         // Big PC Number Display
-        draw_text(g, pc_code, pad + 30, pad + 75, 210, 85, 64.0f, Color(255, 248, 250, 252), FontStyleBold);
+        draw_text(g, pc_code, pad + 24, pad + 68, 180, 80, 56.0f, Color(255, 248, 250, 252), FontStyleBold, StringAlignmentNear, StringAlignmentCenter);
 
-        // PC Tier Badge
-        Color tierCol = Color(255, 56, 189, 248);
-        Color tierBgCol = Color(40, 6, 182, 212);
-        std::string tierLabel = "REGULER";
-        if (pc_type == "vip") {
-            tierCol = Color(255, 251, 191, 36);
-            tierBgCol = Color(40, 245, 158, 11);
-            tierLabel = "VIP";
-        } else if (pc_type == "vip++") {
-            tierCol = Color(255, 192, 132, 252);
-            tierBgCol = Color(40, 168, 85, 247);
-            tierLabel = "VIP++";
-        }
-        SolidBrush tierBadgeBg(tierBgCol);
-        fill_round_rect(g, &tierBadgeBg, pad + 245, pad + 96, 95, 34, 8);
-        draw_text(g, tierLabel, pad + 245, pad + 96, 95, 34, 13.0f, tierCol, FontStyleBold, StringAlignmentCenter, StringAlignmentCenter);
+        // Professional Tier Showcase Card
+        int tierCardX = pad + 208;
+        int tierCardW = left_w - 232;
+        SolidBrush tierCardBg(tierBgCol);
+        Pen tierBorderPen(tierCol, 1.5f);
+        fill_round_rect(g, &tierCardBg, tierCardX, pad + 70, tierCardW, 76, 10);
+        draw_round_rect(g, &tierBorderPen, tierCardX, pad + 70, tierCardW, 76, 10);
 
-        std::string subText = "TERMINAL " + tierLabel + " — SILAKAN LOGIN MEMBER ATAU HUBUNGI KASIR";
-        if (!specs.empty()) {
-            subText = specs + " (Tarif: " + format_rupiah(hourly_rate) + "/jam)";
-        }
-        draw_text(g, subText, pad + 32, pad + 162, left_w - 60, 28, 12.0f, Color(255, 148, 163, 184), FontStyleBold);
+        draw_text(g, tierHeading, tierCardX + 16, pad + 80, tierCardW - 32, 26, 13.5f, tierCol, FontStyleBold);
+        draw_text(g, tierDesc, tierCardX + 16, pad + 108, tierCardW - 32, 22, 11.0f, Color(255, 148, 163, 184));
 
-        // Switch PC Number Quick Buttons (for testing multiple PCs easily)
-        draw_button(g, pad + left_w - 230, pad + 95, 95, 34, "< PC Sebelumnya", Color(255, 30, 41, 59), Color(255, 203, 213, 225), "prev_pc", 0, 6, 11.0f);
-        draw_button(g, pad + left_w - 125, pad + 95, 95, 34, "PC Berikutnya >", Color(255, 30, 41, 59), Color(255, 203, 213, 225), "next_pc", 0, 6, 11.0f);
+        // Hardware Specs & Hourly Rate Box
+        SolidBrush specBoxBg(Color(210, 15, 23, 42));
+        fill_round_rect(g, &specBoxBg, pad + 24, pad + 158, left_w - 48, 66, 10);
+        draw_round_rect(g, &borderPen, pad + 24, pad + 158, left_w - 48, 66, 10);
+
+        // Hardware Specs (Left Side of Spec Box)
+        draw_text(g, "SPESIFIKASI UNIT PC:", pad + 38, pad + 166, left_w - 250, 18, 10.0f, Color(255, 100, 116, 139), FontStyleBold);
+        std::string displaySpecs = specs.empty() ? "Intel Core i5 / Dedicated GPU / Gaming Display" : specs;
+        draw_text(g, displaySpecs, pad + 38, pad + 188, left_w - 250, 24, 11.5f, Color(255, 226, 232, 240), FontStyleBold);
+
+        // Hourly Rate (Right Side of Spec Box)
+        draw_text(g, "TARIF RENTAL:", pad + left_w - 240, pad + 166, 216, 18, 10.0f, Color(255, 100, 116, 139), FontStyleBold, StringAlignmentFar);
+        draw_text(g, format_rupiah(hourly_rate) + " / Jam", pad + left_w - 240, pad + 186, 216, 28, 15.0f, Color(255, 52, 211, 153), FontStyleBold, StringAlignmentFar);
 
         // Packages Preview List on Lockscreen
-        draw_text(g, "DAFTAR PAKET BILLING TERSEDIA:", pad + 32, pad + 215, 350, 26, 13.0f, Color(255, 56, 189, 248), FontStyleBold);
+        draw_text(g, "DAFTAR PAKET BILLING TERSEDIA UNTUK TERMINAL INI:", pad + 26, pad + 236, left_w - 52, 24, 11.5f, Color(255, 56, 189, 248), FontStyleBold);
 
-        int pkg_y = pad + 250;
+        int pkg_y = pad + 264;
         int shown = 0;
         for (const auto& pkg : packages) {
             if (shown >= 4) break;
             SolidBrush pkgBg(Color(180, 30, 41, 59));
-            fill_round_rect(g, &pkgBg, pad + 30, pkg_y, left_w - 60, 64, 10);
-            draw_round_rect(g, &borderPen, pad + 30, pkg_y, left_w - 60, 64, 10);
+            fill_round_rect(g, &pkgBg, pad + 24, pkg_y, left_w - 48, 62, 10);
+            draw_round_rect(g, &borderPen, pad + 24, pkg_y, left_w - 48, 62, 10);
 
-            draw_text(g, pkg.name, pad + 48, pkg_y + 10, 260, 24, 15.0f, Color(255, 241, 245, 249), FontStyleBold);
+            draw_text(g, pkg.name, pad + 40, pkg_y + 10, 270, 24, 14.5f, Color(255, 241, 245, 249), FontStyleBold);
             draw_text(g, std::to_string(pkg.duration_minutes) + " Menit  •  " + pkg.description,
-                      pad + 48, pkg_y + 34, 340, 20, 12.0f, Color(255, 148, 163, 184));
-            draw_text(g, format_rupiah(pkg.price), pad + left_w - 210, pkg_y, 160, 64, 16.0f,
+                      pad + 40, pkg_y + 34, 330, 20, 11.5f, Color(255, 148, 163, 184));
+            draw_text(g, format_rupiah(pkg.price), pad + left_w - 210, pkg_y, 170, 62, 15.5f,
                       Color(255, 52, 211, 153), FontStyleBold, StringAlignmentFar, StringAlignmentCenter);
 
-            pkg_y += 76;
+            pkg_y += 72;
             shown++;
         }
         if (packages.empty()) {
-            draw_text(g, "Menunggu sinkronisasi katalog paket dari Server Laravel...",
-                      pad + 32, pkg_y, left_w - 64, 40, 13.0f, Color(255, 100, 116, 139));
+            draw_text(g, "Menunggu sinkronisasi katalog paket dari Server Kasir...",
+                      pad + 26, pkg_y, left_w - 52, 40, 12.5f, Color(255, 100, 116, 139));
         }
 
         // Bottom info on left card
-        draw_text(g, "Tips Testing: Klik [Isi Demo Member] di kanan untuk masuk instan, atau tekan F11 untuk mode layar penuh.",
-                  pad + 32, height - pad - 42, left_w - 64, 28, 11.5f, Color(255, 100, 116, 139));
+        draw_text(g, "Login akun member di panel kanan untuk membuka terminal • Pengaturan PC teknisi tekan [F2]",
+                  pad + 26, height - pad - 38, left_w - 52, 24, 11.0f, Color(255, 100, 116, 139));
 
         // Right Card: Login Member Box
         fill_round_rect(g, &cardBg, right_x, pad, right_w, height - pad * 2, 16);
@@ -719,22 +849,9 @@ void render_ui(HDC hdc, int width, int height) {
         g.DrawLine(&borderPen, 0, 80, width, 80);
 
         // Station Badge in Header
-        Color tierCol = Color(255, 56, 189, 248);
-        Color tierBgCol = Color(40, 6, 182, 212);
-        std::string tierLabel = "REGULER";
-        if (pc_type == "vip") {
-            tierCol = Color(255, 251, 191, 36);
-            tierBgCol = Color(40, 245, 158, 11);
-            tierLabel = "VIP";
-        } else if (pc_type == "vip++") {
-            tierCol = Color(255, 192, 132, 252);
-            tierBgCol = Color(40, 168, 85, 247);
-            tierLabel = "VIP++";
-        }
-
         SolidBrush stationBg(tierBgCol);
         fill_round_rect(g, &stationBg, 24, 18, 150, 48, 10);
-        draw_text(g, pc_code + " [" + tierLabel + "]", 24, 18, 150, 48, 14.5f, tierCol, FontStyleBold, StringAlignmentCenter, StringAlignmentCenter);
+        draw_text(g, pc_code + " [" + tierTitle + "]", 24, 18, 150, 48, 14.5f, tierCol, FontStyleBold, StringAlignmentCenter, StringAlignmentCenter);
 
         // Member Info
         draw_text(g, "MEMBER AKTIF", 188, 18, 170, 20, 10.5f, Color(255, 148, 163, 184), FontStyleBold);
@@ -1046,19 +1163,25 @@ void render_ui(HDC hdc, int width, int height) {
             // -------------------------------------------------
             // TAB 3: PENGATURAN TERMINAL PC
             // -------------------------------------------------
-            draw_text(g, "PENGATURAN TERMINAL CLIENT C++", cx, cy, cw, 30, 19.0f, Color(255, 248, 250, 252), FontStyleBold);
+            draw_text(g, "INFORMASI & PENGATURAN TERMINAL CLIENT", cx, cy, cw, 30, 19.0f, Color(255, 248, 250, 252), FontStyleBold);
             SolidBrush cardBg(Color(220, 30, 41, 59));
-            fill_round_rect(g, &cardBg, cx, cy + 45, 520, 260, 14);
-            draw_round_rect(g, &borderPen, cx, cy + 45, 520, 260, 14);
+            fill_round_rect(g, &cardBg, cx, cy + 45, 560, 280, 14);
+            draw_round_rect(g, &borderPen, cx, cy + 45, 560, 280, 14);
 
-            draw_text(g, "Nomor Terminal PC Saat Ini: " + pc_code, cx + 24, cy + 70, 460, 28, 16.0f, Color(255, 56, 189, 248), FontStyleBold);
-            draw_button(g, cx + 24, cy + 108, 150, 38, "< Ganti PC Sebelumnya", Color(255, 51, 65, 85), Color(255, 255, 255, 255), "prev_pc", 0, 8, 12.0f);
-            draw_button(g, cx + 188, cy + 108, 150, 38, "Ganti PC Berikutnya >", Color(255, 51, 65, 85), Color(255, 255, 255, 255), "next_pc", 0, 8, 12.0f);
+            draw_text(g, "Terminal PC: " + pc_code + " [" + tierTitle + "]", cx + 24, cy + 68, 510, 28, 16.0f, tierCol, FontStyleBold);
+            std::string sSpecs = specs.empty() ? "Intel Core i5 / Dedicated GPU / Gaming Display" : specs;
+            draw_text(g, "Spesifikasi: " + sSpecs, cx + 24, cy + 104, 510, 22, 12.0f, Color(255, 203, 213, 225));
+            draw_text(g, "Tarif Rental: " + format_rupiah(hourly_rate) + " / Jam", cx + 24, cy + 130, 510, 22, 13.0f, Color(255, 52, 211, 153), FontStyleBold);
 
-            draw_text(g, "Server Laravel Kasir: http://" + server_host + ":" + std::to_string(server_port),
-                      cx + 24, cy + 168, 460, 24, 14.0f, Color(255, 203, 213, 225));
-            draw_button(g, cx + 24, cy + 205, 220, 40, "Sinkronisasi Ulang Katalog",
-                        Color(255, 6, 182, 212), Color(255, 15, 23, 42), "force_sync", 0, 8, 12.5f);
+            draw_text(g, "Server Kasir Terhubung: http://" + server_host + ":" + std::to_string(server_port),
+                      cx + 24, cy + 162, 510, 22, 12.0f, Color(255, 148, 163, 184));
+            draw_text(g, "Konfigurasi Lokal: client_config.ini (Direktori Client)",
+                      cx + 24, cy + 188, 510, 20, 11.0f, Color(255, 100, 116, 139));
+
+            draw_button(g, cx + 24, cy + 224, 240, 38, "Ubah Pengaturan PC [F2]",
+                        Color(255, 51, 65, 85), Color(255, 255, 255, 255), "open_config_modal", 0, 8, 12.0f);
+            draw_button(g, cx + 276, cy + 224, 220, 38, "Sinkronisasi Ulang Data",
+                        Color(255, 6, 182, 212), Color(255, 15, 23, 42), "force_sync", 0, 8, 12.0f);
         }
     }
 
@@ -1116,6 +1239,70 @@ void render_ui(HDC hdc, int width, int height) {
         draw_text(g, g_admin_modal_text, mx + 30, my + 68, mw - 60, 80, 15.0f, Color(255, 248, 250, 252), FontStyleRegular, StringAlignmentCenter);
         draw_button(g, mx + (mw - 180) / 2, my + 165, 180, 40, "MENGERTI (OK)",
                     Color(255, 245, 158, 11), Color(255, 15, 23, 42), "close_admin_modal", 0, 8, 13.0f);
+    }
+
+    // =====================================================
+    // MODAL 3: PENGATURAN STASIUN PC & SERVER (ADMIN / F2)
+    // =====================================================
+    if (g_show_config_modal) {
+        SolidBrush dimBg(Color(215, 3, 7, 18));
+        g.FillRectangle(&dimBg, 0, 0, width, height);
+
+        int mw = 560;
+        int mh = 470;
+        int mx = (width - mw) / 2;
+        int my = (height - mh) / 2;
+
+        SolidBrush modalBg(Color(255, 17, 24, 39));
+        Pen cyanPen(Color(255, 6, 182, 212), 2.0f);
+        fill_round_rect(g, &modalBg, mx, my, mw, mh, 16);
+        draw_round_rect(g, &cyanPen, mx, my, mw, mh, 16);
+
+        draw_text(g, "PENGATURAN STASIUN TERMINAL PC", mx + 24, my + 20, mw - 48, 26, 17.0f, Color(255, 248, 250, 252), FontStyleBold, StringAlignmentCenter);
+        draw_text(g, "Tersimpan di client_config.ini • Khusus Teknisi / Operator Warnet", mx + 24, my + 46, mw - 48, 20, 11.5f, Color(255, 148, 163, 184), FontStyleRegular, StringAlignmentCenter);
+
+        SolidBrush inBg(Color(255, 15, 23, 42));
+        Pen activePen(Color(255, 6, 182, 212), 1.5f);
+        Pen borderPen(Color(100, 51, 65, 85), 1.0f);
+
+        // Field 1: Kode / Nomor Terminal PC
+        draw_text(g, "KODE / NOMOR TERMINAL PC:", mx + 36, my + 78, mw - 72, 18, 11.0f, Color(255, 148, 163, 184), FontStyleBold);
+        fill_round_rect(g, &inBg, mx + 36, my + 100, mw - 72, 40, 8);
+        draw_round_rect(g, (g_focused_input == 10) ? &activePen : &borderPen, mx + 36, my + 100, mw - 72, 40, 8);
+        draw_text(g, g_cfg_pc_code + (g_focused_input == 10 ? "|" : ""), mx + 48, my + 100, mw - 96, 40, 14.0f, Color(255, 248, 250, 252));
+        add_hit_zone(mx + 36, my + 100, mw - 72, 40, "focus_cfg_pc");
+
+        // Quick Presets for PC
+        draw_text(g, "PILIH PRESET CEPAT:", mx + 36, my + 148, 130, 24, 10.5f, Color(255, 100, 116, 139), FontStyleBold);
+        draw_button(g, mx + 165, my + 146, 115, 26, "PC-01 (Reguler)", Color(255, 30, 41, 59), Color(255, 34, 211, 238), "cfg_preset_01", 0, 6, 11.0f);
+        draw_button(g, mx + 288, my + 146, 105, 26, "PC-07 (VIP)", Color(255, 30, 41, 59), Color(255, 251, 191, 36), "cfg_preset_07", 0, 6, 11.0f);
+        draw_button(g, mx + 401, my + 146, 115, 26, "PC-10 (VIP++)", Color(255, 30, 41, 59), Color(255, 216, 180, 254), "cfg_preset_10", 0, 6, 11.0f);
+
+        // Field 2: IP Server Kasir
+        draw_text(g, "ALAMAT IP SERVER KASIR (LAN):", mx + 36, my + 184, mw - 72, 18, 11.0f, Color(255, 148, 163, 184), FontStyleBold);
+        fill_round_rect(g, &inBg, mx + 36, my + 206, mw - 200, 40, 8);
+        draw_round_rect(g, (g_focused_input == 11) ? &activePen : &borderPen, mx + 36, my + 206, mw - 200, 40, 8);
+        draw_text(g, g_cfg_server_host + (g_focused_input == 11 ? "|" : ""), mx + 48, my + 206, mw - 224, 40, 14.0f, Color(255, 248, 250, 252));
+        add_hit_zone(mx + 36, my + 206, mw - 200, 40, "focus_cfg_host");
+
+        draw_button(g, mx + mw - 156, my + 206, 120, 40, "127.0.0.1", Color(255, 30, 41, 59), Color(255, 203, 213, 225), "cfg_host_local", 0, 8, 11.5f);
+
+        // Field 3: Port Server Kasir
+        draw_text(g, "PORT SERVER KASIR:", mx + 36, my + 258, mw - 72, 18, 11.0f, Color(255, 148, 163, 184), FontStyleBold);
+        fill_round_rect(g, &inBg, mx + 36, my + 280, mw - 72, 40, 8);
+        draw_round_rect(g, (g_focused_input == 12) ? &activePen : &borderPen, mx + 36, my + 280, mw - 72, 40, 8);
+        draw_text(g, g_cfg_server_port + (g_focused_input == 12 ? "|" : ""), mx + 48, my + 280, mw - 96, 40, 14.0f, Color(255, 248, 250, 252));
+        add_hit_zone(mx + 36, my + 280, mw - 72, 40, "focus_cfg_port");
+
+        // Helper explanation
+        draw_text(g, "Tier PC (Reguler/VIP/VIP++), spesifikasi hardware, dan tarif sewa jam akan disinkronkan secara otomatis dari server kasir.",
+                  mx + 36, my + 334, mw - 72, 34, 11.0f, Color(255, 100, 116, 139), FontStyleRegular, StringAlignmentCenter);
+
+        // Action buttons
+        draw_button(g, mx + 36, my + 385, 280, 46, "SIMPAN & TERAPKAN",
+                    Color(255, 16, 185, 129), Color(255, 15, 23, 42), "cfg_save", 0, 8, 13.5f);
+        draw_button(g, mx + 326, my + 385, mw - 362, 46, "BATAL [ESC]",
+                    Color(255, 51, 65, 85), Color(255, 226, 232, 240), "cfg_close", 0, 8, 13.0f);
     }
 
     // =====================================================
@@ -1182,8 +1369,16 @@ void handle_click(int x, int y) {
             else if (act == "do_login") { perform_login(); }
             else if (act == "do_logout") { perform_logout(); }
             else if (act == "switch_tab") { g_active_tab = id; g_focused_input = 0; }
-            else if (act == "prev_pc") { change_pc_number(-1); }
-            else if (act == "next_pc") { change_pc_number(1); }
+            else if (act == "open_config_modal") { open_config_modal(); }
+            else if (act == "cfg_close") { close_config_modal(); }
+            else if (act == "cfg_save") { apply_and_save_config(); }
+            else if (act == "focus_cfg_pc") { g_focused_input = 10; }
+            else if (act == "focus_cfg_host") { g_focused_input = 11; }
+            else if (act == "focus_cfg_port") { g_focused_input = 12; }
+            else if (act == "cfg_preset_01") { g_cfg_pc_code = "PC-01"; }
+            else if (act == "cfg_preset_07") { g_cfg_pc_code = "PC-07"; }
+            else if (act == "cfg_preset_10") { g_cfg_pc_code = "PC-10"; }
+            else if (act == "cfg_host_local") { g_cfg_server_host = "127.0.0.1"; }
             else if (act == "force_sync") {
                 show_toast("Menyinkronkan data dengan Server Laravel...");
                 std::thread([]() { sync_catalog_from_server(); sync_heartbeat(); }).detach();
@@ -1264,15 +1459,39 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         case WM_KEYDOWN: {
+            if (wParam == VK_F2) {
+                if (g_show_config_modal) close_config_modal();
+                else open_config_modal();
+                return 0;
+            }
+            if (wParam == VK_ESCAPE) {
+                if (g_show_config_modal) { close_config_modal(); return 0; }
+                if (g_show_qris_modal) { g_show_qris_modal = false; InvalidateRect(hwnd, nullptr, FALSE); return 0; }
+                if (g_show_admin_modal) { g_show_admin_modal = false; InvalidateRect(hwnd, nullptr, FALSE); return 0; }
+                return 0;
+            }
             if (wParam == VK_F11) {
                 toggle_fullscreen(hwnd);
                 return 0;
             }
-            if (wParam == VK_RETURN && g_focused_input == 2) {
-                perform_login();
-                return 0;
+            if (wParam == VK_RETURN) {
+                if (g_show_config_modal) {
+                    apply_and_save_config();
+                    return 0;
+                }
+                if (g_focused_input == 2) {
+                    perform_login();
+                    return 0;
+                }
             }
             if (wParam == VK_TAB) {
+                if (g_show_config_modal) {
+                    if (g_focused_input == 10) g_focused_input = 11;
+                    else if (g_focused_input == 11) g_focused_input = 12;
+                    else g_focused_input = 10;
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    return 0;
+                }
                 if (g_focused_input == 1) g_focused_input = 2;
                 else if (g_focused_input == 2) g_focused_input = 1;
                 InvalidateRect(hwnd, nullptr, FALSE);
@@ -1286,6 +1505,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (g_focused_input == 1) target = &g_input_username;
             else if (g_focused_input == 2) target = &g_input_password;
             else if (g_focused_input == 3) target = &g_input_food_notes;
+            else if (g_focused_input == 10) target = &g_cfg_pc_code;
+            else if (g_focused_input == 11) target = &g_cfg_server_host;
+            else if (g_focused_input == 12) target = &g_cfg_server_port;
 
             if (target) {
                 if (ch == '\b') {
@@ -1317,11 +1539,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow) {
+    // Load local configuration from client_config.ini
+    load_client_config();
+
     // Optional CLI args: WarnetClient.exe PC-02
     if (lpCmdLine && strlen(lpCmdLine) > 0) {
         std::string arg(lpCmdLine);
         if (arg.find("PC-") == 0) {
             g_state.pc_code = arg;
+            g_cfg_pc_code = arg;
         }
     }
 
