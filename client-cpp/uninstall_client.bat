@@ -27,7 +27,9 @@ netsh advfirewall firewall delete rule name="Ukikura Warnet Client" >nul 2>&1
 echo 4. Menghapus Shortcut Desktop...
 powershell -Command "$p = [System.IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'Ukikura Warnet Client.lnk'); if (Test-Path $p) { Remove-Item $p -Force }" >nul 2>&1
 
-echo 5. Memulihkan Taskbar Windows...
+echo 5. Memulihkan Taskbar Windows ^& Akses Task Manager...
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableTaskMgr /f >nul 2>&1
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableLockWorkstation /f >nul 2>&1
 powershell -Command "$code = @'
 using System;
 using System.Runtime.InteropServices;

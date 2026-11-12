@@ -42,6 +42,10 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION && g_kiosk_block_keys.load()) {
         KBDLLHOOKSTRUCT* pKey = (KBDLLHOOKSTRUCT*)lParam;
         bool isAlt = (pKey->flags & LLKHF_ALTDOWN) != 0;
+        bool isCtrl = ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) ||
+                      ((GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0) ||
+                      ((GetAsyncKeyState(VK_RCONTROL) & 0x8000) != 0) ||
+                      ((GetKeyState(VK_CONTROL) & 0x8000) != 0);
 
         // Block Windows Keys (LWIN, RWIN)
         if (pKey->vkCode == VK_LWIN || pKey->vkCode == VK_RWIN) {
@@ -51,20 +55,24 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         if (isAlt && pKey->vkCode == VK_TAB) {
             return 1;
         }
-        // Block Alt+Escape
-        if (isAlt && pKey->vkCode == VK_ESCAPE) {
+        // Block Alt+Escape and Alt+Space (System Window Menu)
+        if (isAlt && (pKey->vkCode == VK_ESCAPE || pKey->vkCode == VK_SPACE)) {
             return 1;
         }
-        // Block Ctrl+Escape (Opens Start Menu)
-        if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) && pKey->vkCode == VK_ESCAPE) {
+        // Block Ctrl+Escape (Start Menu) & Ctrl+Shift+Escape (Task Manager)
+        if (isCtrl && pKey->vkCode == VK_ESCAPE) {
             return 1;
         }
         // Block Alt+F4
         if (isAlt && pKey->vkCode == VK_F4) {
             return 1;
         }
-        // Block Context Menu Key
-        if (pKey->vkCode == VK_APPS) {
+        // Block F11 fullscreen bypass while locked
+        if (pKey->vkCode == VK_F11) {
+            return 1;
+        }
+        // Block Context Menu & Sleep Keys
+        if (pKey->vkCode == VK_APPS || pKey->vkCode == VK_SLEEP) {
             return 1;
         }
     }
@@ -83,11 +91,37 @@ void set_taskbar_visible(bool show) {
     }
 }
 
+void set_windows_kiosk_policies(bool enable) {
+    HKEY hKey = nullptr;
+    const char* subKey = "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System";
+    if (enable) {
+        if (RegCreateKeyExA(HKEY_CURRENT_USER, subKey, 0, NULL, REG_OPTION_NON_VOLATILE,
+                            KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+            DWORD val = 1;
+            RegSetValueExA(hKey, "DisableTaskMgr", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
+            RegSetValueExA(hKey, "DisableLockWorkstation", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
+            RegCloseKey(hKey);
+        }
+    } else {
+        if (RegOpenKeyExA(HKEY_CURRENT_USER, subKey, 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
+            RegDeleteValueA(hKey, "DisableTaskMgr");
+            RegDeleteValueA(hKey, "DisableLockWorkstation");
+            RegCloseKey(hKey);
+        }
+    }
+}
+
 // Global Application State
 ClientState g_state;
 std::atomic<bool> g_running{true};
+std::atomic<bool> g_allow_operator_exit{false};
 HWND g_hwnd = nullptr;
 int g_game_page = 0;
+
+bool is_localhost_server() {
+    std::lock_guard<std::mutex> lock(g_state.mtx);
+    return (g_state.server_host == "127.0.0.1" || g_state.server_host == "localhost");
+}
 
 bool is_tier_sufficient(const std::string& current_tier, const std::string& min_tier) {
     if (min_tier == "reguler") return true;
@@ -111,6 +145,7 @@ void apply_window_mode(ClientWindowMode mode) {
         set_taskbar_visible(false);
         SetWindowLong(g_hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
         SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, sw, sh, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        SetForegroundWindow(g_hwnd);
     } else if (mode == MODE_UNLOCKED_DASHBOARD) {
         g_kiosk_block_keys = false;
         set_taskbar_visible(true);
@@ -122,6 +157,7 @@ void apply_window_mode(ClientWindowMode mode) {
         if (wx < 0) wx = 0;
         if (wy < 0) wy = 0;
         SetWindowPos(g_hwnd, HWND_NOTOPMOST, wx, wy, ww, wh, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        SetForegroundWindow(g_hwnd);
     } else if (mode == MODE_UNLOCKED_MINIBAR) {
         g_kiosk_block_keys = false;
         set_taskbar_visible(true);
@@ -141,10 +177,10 @@ std::string g_food_category_filter = "all"; // "all", "makanan", "minuman", "sna
 std::string g_game_category_filter = "all"; // "all", "f2p", "vip", "vip_plus", "tools"
 std::string g_active_vault_user = "";
 std::string g_active_vault_game = "";
-bool g_fullscreen_lock_mode = false; // Toggleable with F11 so user can test comfortably
+bool g_fullscreen_lock_mode = false; // Toggleable with F11 only when unlocked
 
 // Form Inputs
-int g_focused_input = 0; // 0: none, 1: username, 2: password, 3: food_notes, 10: cfg_pc, 11: cfg_host, 12: cfg_port
+int g_focused_input = 0; // 0: none, 1: username, 2: password, 3: food_notes, 10: cfg_pc, 11: cfg_host, 12: cfg_port, 13: cfg_pin
 std::string g_input_username = "sultan01";
 std::string g_input_password = "password";
 std::string g_input_food_notes = "";
@@ -154,6 +190,8 @@ bool g_show_config_modal = false;
 std::string g_cfg_pc_code = "PC-01";
 std::string g_cfg_server_host = "127.0.0.1";
 std::string g_cfg_server_port = "8088";
+std::string g_operator_pin = "1234";
+std::string g_cfg_operator_pin = "";
 
 // QRIS Modal State
 bool g_show_qris_modal = false;
@@ -287,7 +325,7 @@ void cleanup_user_session_cache() {
             }
         }
     }
-    bool is_localhost_dev = (host == "127.0.0.1" || host == "localhost");
+    bool is_localhost_dev = is_localhost_server();
     DWORD selfPid = GetCurrentProcessId();
 
     // 1. Tutup proses game aktif secara dinamis (berdasarkan path direktori game / daftar game server)
@@ -375,6 +413,13 @@ void scan_and_terminate_cheat_tools() {
         "cheatengine", "processhacker", "x64dbg", "x32dbg", "ollydbg",
         "injector", "artmoney", "speedhack", "dnspy"
     };
+    bool is_locked = true;
+    {
+        std::lock_guard<std::mutex> lock(g_state.mtx);
+        is_locked = g_state.is_locked;
+    }
+    bool block_taskmgr = is_locked || !is_localhost_server();
+
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (hSnapshot != INVALID_HANDLE_VALUE) {
         PROCESSENTRY32 pe;
@@ -386,6 +431,14 @@ void scan_and_terminate_cheat_tools() {
                 std::string exeName = chExe;
                 std::string lowerExe = exeName;
                 for (auto& c : lowerExe) c = (char)tolower(c);
+                if (block_taskmgr && lowerExe == "taskmgr.exe") {
+                    HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+                    if (hProc) {
+                        TerminateProcess(hProc, 1);
+                        CloseHandle(hProc);
+                    }
+                    continue;
+                }
                 for (const char* b : blacklist) {
                     if (lowerExe.find(b) != std::string::npos) {
                         HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
@@ -623,10 +676,12 @@ void load_client_config() {
     char bufHost[256] = {0};
     char bufPort[64] = {0};
     char bufPc[64] = {0};
+    char bufPin[64] = {0};
 
     GetPrivateProfileStringA("Client", "server_host", "127.0.0.1", bufHost, sizeof(bufHost), iniPath.c_str());
     GetPrivateProfileStringA("Client", "server_port", "8088", bufPort, sizeof(bufPort), iniPath.c_str());
     GetPrivateProfileStringA("Client", "pc_code", "PC-01", bufPc, sizeof(bufPc), iniPath.c_str());
+    GetPrivateProfileStringA("Client", "operator_pin", "1234", bufPin, sizeof(bufPin), iniPath.c_str());
 
     int port = std::atoi(bufPort);
     if (port <= 0) port = 8088;
@@ -634,6 +689,8 @@ void load_client_config() {
     if (pc.empty()) pc = "PC-01";
     std::string host = bufHost;
     if (host.empty()) host = "127.0.0.1";
+    std::string pin = bufPin;
+    if (pin.empty()) pin = "1234";
 
     {
         std::lock_guard<std::mutex> lock(g_state.mtx);
@@ -645,10 +702,12 @@ void load_client_config() {
     g_cfg_server_host = host;
     g_cfg_server_port = std::to_string(port);
     g_cfg_pc_code = pc;
+    g_operator_pin = pin;
 
     WritePrivateProfileStringA("Client", "server_host", host.c_str(), iniPath.c_str());
     WritePrivateProfileStringA("Client", "server_port", std::to_string(port).c_str(), iniPath.c_str());
     WritePrivateProfileStringA("Client", "pc_code", pc.c_str(), iniPath.c_str());
+    WritePrivateProfileStringA("Client", "operator_pin", pin.c_str(), iniPath.c_str());
 }
 
 void save_client_config(const std::string& pc, const std::string& host, int port) {
@@ -656,6 +715,7 @@ void save_client_config(const std::string& pc, const std::string& host, int port
     WritePrivateProfileStringA("Client", "server_host", host.c_str(), iniPath.c_str());
     WritePrivateProfileStringA("Client", "server_port", std::to_string(port).c_str(), iniPath.c_str());
     WritePrivateProfileStringA("Client", "pc_code", pc.c_str(), iniPath.c_str());
+    WritePrivateProfileStringA("Client", "operator_pin", g_operator_pin.c_str(), iniPath.c_str());
 
     {
         std::lock_guard<std::mutex> lock(g_state.mtx);
@@ -669,6 +729,7 @@ void save_client_config(const std::string& pc, const std::string& host, int port
     g_cfg_server_host = host;
     g_cfg_server_port = std::to_string(port);
     g_cfg_pc_code = pc;
+    set_windows_kiosk_policies(!is_localhost_server());
 
     show_toast("Konfigurasi tersimpan ke client_config.ini! Menghubungkan ke " + pc);
     std::thread([]() {
@@ -684,18 +745,26 @@ void open_config_modal() {
         g_cfg_server_host = g_state.server_host;
         g_cfg_server_port = std::to_string(g_state.server_port);
     }
+    g_cfg_operator_pin = "";
     g_show_config_modal = true;
-    g_focused_input = 10;
+    g_focused_input = 13;
     if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
 }
 
 void close_config_modal() {
     g_show_config_modal = false;
+    g_cfg_operator_pin = "";
     g_focused_input = 0;
     if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
 }
 
 void apply_and_save_config() {
+    if (g_cfg_operator_pin != g_operator_pin) {
+        g_focused_input = 13;
+        show_toast("PIN Operator salah / kosong! Masukkan PIN Teknisi untuk menyimpan.", 3500);
+        if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
+        return;
+    }
     std::string pc = g_cfg_pc_code;
     std::string host = g_cfg_server_host;
     int port = std::atoi(g_cfg_server_port.c_str());
@@ -1819,7 +1888,7 @@ void render_ui(HDC hdc, int width, int height) {
         g.FillRectangle(&dimBg, 0, 0, width, height);
 
         int mw = 560;
-        int mh = 470;
+        int mh = 490;
         int mx = (width - mw) / 2;
         int my = (height - mh) / 2;
 
@@ -1829,50 +1898,58 @@ void render_ui(HDC hdc, int width, int height) {
         draw_round_rect(g, &cyanPen, mx, my, mw, mh, 16);
 
         draw_text(g, "PENGATURAN STASIUN TERMINAL PC", mx + 24, my + 20, mw - 48, 26, 17.0f, Color(255, 248, 250, 252), FontStyleBold, StringAlignmentCenter);
-        draw_text(g, "Tersimpan di client_config.ini • Khusus Teknisi / Operator Warnet", mx + 24, my + 46, mw - 48, 20, 11.5f, Color(255, 148, 163, 184), FontStyleRegular, StringAlignmentCenter);
-        draw_button(g, mx + mw - 140, my + 18, 105, 28, "KELUAR APP", Color(255, 220, 38, 38), Color(255, 255, 255, 255), "cfg_exit_app", 0, 6, 10.5f);
+        draw_text(g, "Tersimpan di client_config.ini | Khusus Teknisi / Operator Warnet", mx + 24, my + 46, mw - 48, 20, 11.5f, Color(255, 148, 163, 184), FontStyleRegular, StringAlignmentCenter);
+        draw_button(g, mx + mw - 134, my + 18, 105, 28, "KELUAR APP", Color(255, 220, 38, 38), Color(255, 255, 255, 255), "cfg_exit_app", 0, 6, 10.5f);
 
         SolidBrush inBg(Color(255, 15, 23, 42));
         Pen activePen(Color(255, 6, 182, 212), 1.5f);
         Pen borderPen(Color(100, 51, 65, 85), 1.0f);
 
         // Field 1: Kode / Nomor Terminal PC
-        draw_text(g, "KODE / NOMOR TERMINAL PC:", mx + 36, my + 78, mw - 72, 18, 11.0f, Color(255, 148, 163, 184), FontStyleBold);
-        fill_round_rect(g, &inBg, mx + 36, my + 100, mw - 72, 40, 8);
-        draw_round_rect(g, (g_focused_input == 10) ? &activePen : &borderPen, mx + 36, my + 100, mw - 72, 40, 8);
-        draw_text(g, g_cfg_pc_code + (g_focused_input == 10 ? "|" : ""), mx + 48, my + 100, mw - 96, 40, 14.0f, Color(255, 248, 250, 252));
-        add_hit_zone(mx + 36, my + 100, mw - 72, 40, "focus_cfg_pc");
+        draw_text(g, "KODE / NOMOR TERMINAL PC:", mx + 36, my + 74, mw - 72, 18, 10.5f, Color(255, 148, 163, 184), FontStyleBold);
+        fill_round_rect(g, &inBg, mx + 36, my + 94, mw - 72, 38, 8);
+        draw_round_rect(g, (g_focused_input == 10) ? &activePen : &borderPen, mx + 36, my + 94, mw - 72, 38, 8);
+        draw_text(g, g_cfg_pc_code + (g_focused_input == 10 ? "|" : ""), mx + 48, my + 94, mw - 96, 38, 13.5f, Color(255, 248, 250, 252));
+        add_hit_zone(mx + 36, my + 94, mw - 72, 38, "focus_cfg_pc");
 
         // Quick Presets for PC
-        draw_text(g, "PILIH PRESET CEPAT:", mx + 36, my + 148, 130, 24, 10.5f, Color(255, 100, 116, 139), FontStyleBold);
-        draw_button(g, mx + 165, my + 146, 115, 26, "PC-01 (Reguler)", Color(255, 30, 41, 59), Color(255, 34, 211, 238), "cfg_preset_01", 0, 6, 11.0f);
-        draw_button(g, mx + 288, my + 146, 105, 26, "PC-07 (VIP)", Color(255, 30, 41, 59), Color(255, 251, 191, 36), "cfg_preset_07", 0, 6, 11.0f);
-        draw_button(g, mx + 401, my + 146, 115, 26, "PC-10 (VIP++)", Color(255, 30, 41, 59), Color(255, 216, 180, 254), "cfg_preset_10", 0, 6, 11.0f);
+        draw_text(g, "PILIH PRESET CEPAT:", mx + 36, my + 140, 130, 24, 10.5f, Color(255, 100, 116, 139), FontStyleBold);
+        draw_button(g, mx + 165, my + 138, 115, 26, "PC-01 (Reguler)", Color(255, 30, 41, 59), Color(255, 34, 211, 238), "cfg_preset_01", 0, 6, 11.0f);
+        draw_button(g, mx + 288, my + 138, 105, 26, "PC-07 (VIP)", Color(255, 30, 41, 59), Color(255, 251, 191, 36), "cfg_preset_07", 0, 6, 11.0f);
+        draw_button(g, mx + 401, my + 138, 115, 26, "PC-10 (VIP++)", Color(255, 30, 41, 59), Color(255, 216, 180, 254), "cfg_preset_10", 0, 6, 11.0f);
 
         // Field 2: IP Server Kasir
-        draw_text(g, "ALAMAT IP SERVER KASIR (LAN):", mx + 36, my + 184, mw - 72, 18, 11.0f, Color(255, 148, 163, 184), FontStyleBold);
-        fill_round_rect(g, &inBg, mx + 36, my + 206, mw - 200, 40, 8);
-        draw_round_rect(g, (g_focused_input == 11) ? &activePen : &borderPen, mx + 36, my + 206, mw - 200, 40, 8);
-        draw_text(g, g_cfg_server_host + (g_focused_input == 11 ? "|" : ""), mx + 48, my + 206, mw - 224, 40, 14.0f, Color(255, 248, 250, 252));
-        add_hit_zone(mx + 36, my + 206, mw - 200, 40, "focus_cfg_host");
+        draw_text(g, "ALAMAT IP SERVER KASIR (LAN / VM):", mx + 36, my + 174, mw - 72, 18, 10.5f, Color(255, 148, 163, 184), FontStyleBold);
+        fill_round_rect(g, &inBg, mx + 36, my + 194, mw - 200, 38, 8);
+        draw_round_rect(g, (g_focused_input == 11) ? &activePen : &borderPen, mx + 36, my + 194, mw - 200, 38, 8);
+        draw_text(g, g_cfg_server_host + (g_focused_input == 11 ? "|" : ""), mx + 48, my + 194, mw - 224, 38, 13.5f, Color(255, 248, 250, 252));
+        add_hit_zone(mx + 36, my + 194, mw - 200, 38, "focus_cfg_host");
 
-        draw_button(g, mx + mw - 156, my + 206, 120, 40, "127.0.0.1", Color(255, 30, 41, 59), Color(255, 203, 213, 225), "cfg_host_local", 0, 8, 11.5f);
+        draw_button(g, mx + mw - 156, my + 194, 120, 38, "127.0.0.1", Color(255, 30, 41, 59), Color(255, 203, 213, 225), "cfg_host_local", 0, 8, 11.5f);
 
         // Field 3: Port Server Kasir
-        draw_text(g, "PORT SERVER KASIR:", mx + 36, my + 258, mw - 72, 18, 11.0f, Color(255, 148, 163, 184), FontStyleBold);
-        fill_round_rect(g, &inBg, mx + 36, my + 280, mw - 72, 40, 8);
-        draw_round_rect(g, (g_focused_input == 12) ? &activePen : &borderPen, mx + 36, my + 280, mw - 72, 40, 8);
-        draw_text(g, g_cfg_server_port + (g_focused_input == 12 ? "|" : ""), mx + 48, my + 280, mw - 96, 40, 14.0f, Color(255, 248, 250, 252));
-        add_hit_zone(mx + 36, my + 280, mw - 72, 40, "focus_cfg_port");
+        draw_text(g, "PORT SERVER KASIR:", mx + 36, my + 240, mw - 72, 18, 10.5f, Color(255, 148, 163, 184), FontStyleBold);
+        fill_round_rect(g, &inBg, mx + 36, my + 260, mw - 72, 38, 8);
+        draw_round_rect(g, (g_focused_input == 12) ? &activePen : &borderPen, mx + 36, my + 260, mw - 72, 38, 8);
+        draw_text(g, g_cfg_server_port + (g_focused_input == 12 ? "|" : ""), mx + 48, my + 260, mw - 96, 38, 13.5f, Color(255, 248, 250, 252));
+        add_hit_zone(mx + 36, my + 260, mw - 72, 38, "focus_cfg_port");
+
+        // Field 4: PIN Operator Teknisi (Wajib untuk Simpan / Keluar App)
+        draw_text(g, "PIN OPERATOR TEKNISI (WAJIB UNTUK SIMPAN / KELUAR):", mx + 36, my + 306, mw - 72, 18, 10.5f, Color(255, 251, 191, 36), FontStyleBold);
+        fill_round_rect(g, &inBg, mx + 36, my + 326, mw - 72, 38, 8);
+        draw_round_rect(g, (g_focused_input == 13) ? &activePen : &borderPen, mx + 36, my + 326, mw - 72, 38, 8);
+        std::string maskedPin(g_cfg_operator_pin.size(), '*');
+        draw_text(g, maskedPin + (g_focused_input == 13 ? "|" : ""), mx + 48, my + 326, mw - 96, 38, 13.5f, Color(255, 248, 250, 252));
+        add_hit_zone(mx + 36, my + 326, mw - 72, 38, "focus_cfg_pin");
 
         // Helper explanation
-        draw_text(g, "Tier PC (Reguler/VIP/VIP++), spesifikasi hardware, dan tarif sewa jam akan disinkronkan secara otomatis dari server kasir.",
-                  mx + 36, my + 334, mw - 72, 34, 11.0f, Color(255, 100, 116, 139), FontStyleRegular, StringAlignmentCenter);
+        draw_text(g, "Tier PC dan daftar game disinkronkan dari server. Default PIN Operator: 1234 (ubah di client_config.ini).",
+                  mx + 36, my + 372, mw - 72, 34, 10.5f, Color(255, 100, 116, 139), FontStyleRegular, StringAlignmentCenter);
 
         // Action buttons
-        draw_button(g, mx + 36, my + 385, 280, 46, "SIMPAN & TERAPKAN",
+        draw_button(g, mx + 36, my + 416, 280, 46, "SIMPAN & TERAPKAN",
                     Color(255, 16, 185, 129), Color(255, 15, 23, 42), "cfg_save", 0, 8, 13.5f);
-        draw_button(g, mx + 326, my + 385, mw - 362, 46, "BATAL [ESC]",
+        draw_button(g, mx + 326, my + 416, mw - 362, 46, "BATAL [ESC]",
                     Color(255, 51, 65, 85), Color(255, 226, 232, 240), "cfg_close", 0, 8, 13.0f);
     }
 
@@ -1963,7 +2040,16 @@ void handle_click(int x, int y) {
             else if (act == "game_page_prev") { if (g_game_page > 0) g_game_page--; }
             else if (act == "game_page_next") { g_game_page++; }
             else if (act == "open_game_folder") { open_game_folder(); }
-            else if (act == "cfg_exit_app") { DestroyWindow(g_hwnd); }
+            else if (act == "cfg_exit_app") {
+                if (g_cfg_operator_pin != g_operator_pin) {
+                    g_focused_input = 13;
+                    show_toast("PIN Operator salah / kosong! Masukkan PIN Teknisi untuk keluar aplikasi.", 3500);
+                } else {
+                    g_allow_operator_exit = true;
+                    set_windows_kiosk_policies(false);
+                    DestroyWindow(g_hwnd);
+                }
+            }
             else if (act == "switch_tab") { g_active_tab = id; g_focused_input = 0; }
             else if (act == "open_config_modal") { open_config_modal(); }
             else if (act == "cfg_close") { close_config_modal(); }
@@ -1971,6 +2057,7 @@ void handle_click(int x, int y) {
             else if (act == "focus_cfg_pc") { g_focused_input = 10; }
             else if (act == "focus_cfg_host") { g_focused_input = 11; }
             else if (act == "focus_cfg_port") { g_focused_input = 12; }
+            else if (act == "focus_cfg_pin") { g_focused_input = 13; }
             else if (act == "cfg_preset_01") { g_cfg_pc_code = "PC-01"; }
             else if (act == "cfg_preset_07") { g_cfg_pc_code = "PC-07"; }
             else if (act == "cfg_preset_10") { g_cfg_pc_code = "PC-10"; }
@@ -2022,7 +2109,15 @@ void handle_click(int x, int y) {
     InvalidateRect(g_hwnd, nullptr, FALSE);
 }
 
+bool is_client_locked() {
+    std::lock_guard<std::mutex> lock(g_state.mtx);
+    return g_state.is_locked;
+}
+
 void toggle_fullscreen(HWND hwnd) {
+    if (is_client_locked() || g_window_mode == MODE_LOCKED_FULLSCREEN) {
+        return;
+    }
     g_fullscreen_lock_mode = !g_fullscreen_lock_mode;
     if (g_fullscreen_lock_mode) {
         SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
@@ -2040,6 +2135,35 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_APP_APPLY_WINDOW_MODE:
             apply_window_mode((ClientWindowMode)wParam);
             return 0;
+
+        case WM_CLOSE: {
+            if (g_allow_operator_exit.load()) {
+                DestroyWindow(hwnd);
+                return 0;
+            }
+            if (!is_client_locked()) {
+                apply_window_mode(MODE_UNLOCKED_MINIBAR);
+            } else {
+                show_toast("Terminal terkunci! Login atau tekan F2 + PIN Operator.", 2500);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
+
+        case WM_SYSCOMMAND: {
+            UINT cmd = (UINT)(wParam & 0xFFF0);
+            if (cmd == SC_CLOSE && !g_allow_operator_exit.load()) {
+                SendMessage(hwnd, WM_CLOSE, 0, 0);
+                return 0;
+            }
+            if (is_client_locked() &&
+                (cmd == SC_MINIMIZE || cmd == SC_MAXIMIZE || cmd == SC_RESTORE ||
+                 cmd == SC_MOVE || cmd == SC_SIZE || cmd == SC_KEYMENU ||
+                 cmd == SC_TASKLIST || cmd == SC_SCREENSAVE)) {
+                return 0;
+            }
+            break;
+        }
 
         case WM_PAINT: {
             PAINTSTRUCT ps;
@@ -2075,7 +2199,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
             if (wParam == VK_F11) {
-                toggle_fullscreen(hwnd);
+                if (!is_client_locked()) {
+                    toggle_fullscreen(hwnd);
+                }
                 return 0;
             }
             if (wParam == VK_RETURN) {
@@ -2092,6 +2218,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (g_show_config_modal) {
                     if (g_focused_input == 10) g_focused_input = 11;
                     else if (g_focused_input == 11) g_focused_input = 12;
+                    else if (g_focused_input == 12) g_focused_input = 13;
                     else g_focused_input = 10;
                     InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
@@ -2112,6 +2239,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             else if (g_focused_input == 10) target = &g_cfg_pc_code;
             else if (g_focused_input == 11) target = &g_cfg_server_host;
             else if (g_focused_input == 12) target = &g_cfg_server_port;
+            else if (g_focused_input == 13) target = &g_cfg_operator_pin;
 
             if (target) {
                 if (ch == '\b') {
@@ -2131,10 +2259,31 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     g_state.remaining_seconds--;
                 }
                 InvalidateRect(hwnd, nullptr, FALSE);
+            } else if (wParam == 2) {
+                // Kiosk Watchdog Guard: keep lock screen fullscreen, topmost, and taskbar hidden
+                if (is_client_locked() && !g_allow_operator_exit.load()) {
+                    if (g_window_mode != MODE_LOCKED_FULLSCREEN) {
+                        apply_window_mode(MODE_LOCKED_FULLSCREEN);
+                    }
+                    set_taskbar_visible(false);
+                    int sw = GetSystemMetrics(SM_CXSCREEN);
+                    int sh = GetSystemMetrics(SM_CYSCREEN);
+                    if (IsIconic(hwnd)) {
+                        ShowWindow(hwnd, SW_RESTORE);
+                    }
+                    RECT rc;
+                    GetWindowRect(hwnd, &rc);
+                    bool wrongRect = (rc.left != 0 || rc.top != 0 || (rc.right - rc.left) != sw || (rc.bottom - rc.top) != sh);
+                    if (wrongRect || GetForegroundWindow() != hwnd) {
+                        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, sw, sh, SWP_SHOWWINDOW);
+                        SetForegroundWindow(hwnd);
+                    }
+                }
             }
             return 0;
         }
         case WM_DESTROY:
+            set_windows_kiosk_policies(false);
             set_taskbar_visible(true);
             if (g_kbd_hook) {
                 UnhookWindowsHookEx(g_kbd_hook);
@@ -2147,9 +2296,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow) {
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int) {
+    HANDLE hSingleMutex = CreateMutexA(NULL, TRUE, "Local\\UkikuraWarnetClientSingleInstance");
+    if (hSingleMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND hExisting = FindWindow(L"UkikuraWarnetClientClass", NULL);
+        if (hExisting) {
+            ShowWindow(hExisting, SW_RESTORE);
+            SetForegroundWindow(hExisting);
+        }
+        CloseHandle(hSingleMutex);
+        return 0;
+    }
+
     // Load local configuration from client_config.ini
     load_client_config();
+    if (!is_localhost_server()) {
+        set_windows_kiosk_policies(true);
+    }
 
     // Optional CLI args: WarnetClient.exe PC-02
     if (lpCmdLine && strlen(lpCmdLine) > 0) {
@@ -2192,11 +2355,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     // Initial window mode: locked kiosk fullscreen
     apply_window_mode(MODE_LOCKED_FULLSCREEN);
 
-    ShowWindow(g_hwnd, nCmdShow);
+    ShowWindow(g_hwnd, SW_SHOW);
     UpdateWindow(g_hwnd);
+    SetForegroundWindow(g_hwnd);
 
-    // 1-second UI timer
+    // 1-second UI timer & 400ms Kiosk Guard watchdog timer
     SetTimer(g_hwnd, 1, 1000, nullptr);
+    SetTimer(g_hwnd, 2, 400, nullptr);
 
     // Background polling worker thread (every 2 seconds)
     std::thread poller([]() {
@@ -2207,7 +2372,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
             }
             sync_heartbeat();
 
-            // Watchdog Anti-Cheat & Pencegahan HWID Ban setiap 4 detik
+            // Watchdog Anti-Cheat, TaskMgr & Pencegahan HWID Ban setiap 4 detik
             if (tick % 2 == 0) {
                 scan_and_terminate_cheat_tools();
             }
@@ -2231,7 +2396,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
         UnhookWindowsHookEx(g_kbd_hook);
         g_kbd_hook = nullptr;
     }
+    set_windows_kiosk_policies(false);
     set_taskbar_visible(true);
     GdiplusShutdown(gdiplusToken);
+    if (hSingleMutex) {
+        ReleaseMutex(hSingleMutex);
+        CloseHandle(hSingleMutex);
+    }
     return 0;
 }

@@ -47,12 +47,14 @@ echo.
 set DEFAULT_PC=PC-01
 set DEFAULT_HOST=127.0.0.1
 set DEFAULT_PORT=8088
+set DEFAULT_PIN=1234
 
 if exist "%CONFIG_FILE%" (
     for /f "usebackq tokens=1,2 delims==" %%A in ("%CONFIG_FILE%") do (
         if /i "%%A"=="pc_code" if not "%%B"=="" set DEFAULT_PC=%%B
         if /i "%%A"=="server_host" if not "%%B"=="" set DEFAULT_HOST=%%B
         if /i "%%A"=="server_port" if not "%%B"=="" set DEFAULT_PORT=%%B
+        if /i "%%A"=="operator_pin" if not "%%B"=="" set DEFAULT_PIN=%%B
     )
 )
 
@@ -80,6 +82,7 @@ if /i "%~1"=="/silent" (
     echo pc_code=%USER_PC%
     echo server_host=%USER_HOST%
     echo server_port=%USER_PORT%
+    echo operator_pin=%DEFAULT_PIN%
 ) > "%CONFIG_FILE%"
 
 echo [OK] File konfigurasi berhasil diperbarui: %CONFIG_FILE%
@@ -124,10 +127,11 @@ echo INSTALASI ^& SETUP CLIENT SELESAI DENGAN SUKSES!
 echo.
 echo Catatan Keamanan Client Warnet:
 echo  - Mode Terkunci: Layar penuh borderless (Topmost), taskbar disembunyikan.
-echo  - Tombol Windows, Alt+Tab, Alt+Esc, Ctrl+Esc, dan Alt+F4 diblokir.
+echo  - Tombol Windows, Alt+Tab, Alt+Esc, Ctrl+Esc, Ctrl+Shift+Esc, Alt+F4, dan F11 diblokir.
+echo  - Task Manager dinonaktifkan selama proteksi client aktif (pulih lewat uninstall / keluar teknisi).
 echo  - Setelah pelanggan login, taskbar muncul kembali dan game dapat dimainkan.
 echo  - Tersedia katalog game dan Bilah Mini melayang agar tidak menutupi game.
-echo  - Khusus Teknisi: Tekan F2 untuk membuka menu konfigurasi PC kapan saja.
+echo  - Khusus Teknisi: Tekan F2 lalu masukkan PIN Operator (%DEFAULT_PIN%) untuk ubah/keluar app.
 echo =====================================================================
 echo.
 set /p LAUNCH_NOW="Apakah ingin menjalankan Ukikura Warnet Client sekarang? (Y/N) [Default Y]: "

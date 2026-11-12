@@ -111,12 +111,13 @@ Write-Host '[2/4] Mengunduh install_client.bat & uninstall_client.bat ...'
 Invoke-WebRequest -Uri "$baseUrl/download/installer" -OutFile "$installDir\install_client.bat" -UseBasicParsing
 Invoke-WebRequest -Uri "$baseUrl/download/uninstaller" -OutFile "$installDir\uninstall_client.bat" -UseBasicParsing
 
-Write-Host "[3/4] Menulis client_config.ini (PC=$pcCode, Server=${serverHost}:${serverPort}) ..."
+Write-Host "[3/4] Menulis client_config.ini (PC=$pcCode, Server=${serverHost}:${serverPort}, PIN=1234) ..."
 @"
 [Client]
 pc_code=$pcCode
 server_host=$serverHost
 server_port=$serverPort
+operator_pin=1234
 "@ | Set-Content -Path "$installDir\client_config.ini" -Encoding ASCII
 
 Write-Host '[4/4] Siap dijalankan! Membuka folder instalasi & menjalankan installer...'
@@ -178,7 +179,8 @@ Route::get('/vm-setup', function (\Illuminate\Http\Request $request) {
     <li>Saat <code>install_client.bat</code> dijalankan: tekan Enter untuk mempertahankan konfigurasi <code>{$host}:{$port}</code> dan <code>PC-01</code> (atau ganti misalnya <code>PC-08</code> untuk tes tier VIP).</li>
     <li>Mode Kiosk akan menutup taskbar dan mengunci tombol Windows hingga login dilakukan.</li>
     <li>Akun demo siap pakai: <code>sultan01</code> atau <code>gamer02</code> (atau login mode Paket Kasir/Guest dari Dashboard Kasir).</li>
-    <li>Tekan <code>F2</code> untuk mengganti Kode PC atau IP Server kapan saja, dan <code>F11</code> untuk toggle Fullscreen/Windowed saat debugging.</li>
+    <li>Tekan <code>F2</code> dan masukkan PIN Operator (default <code>1234</code>) untuk mengganti Kode PC, IP Server, atau keluar aplikasi.</li>
+    <li>Tekan <code>F11</code> untuk toggle Fullscreen/Windowed setelah login (dikunci penuh sebelum login).</li>
     <li>Untuk mencabut autorun startup dari VM setelah tes selesai, jalankan <code>uninstall_client.bat</code> (Run as Administrator).</li>
   </ul>
 </div>
