@@ -266,6 +266,18 @@ HINSTANCE execute_game_command(const std::string& command, const std::string& ar
     );
 }
 
+bool is_uri_scheme_registered(const std::string& uri) {
+    size_t pos = uri.find("://");
+    if (pos == std::string::npos || pos == 0) return false;
+    std::string scheme = uri.substr(0, pos);
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExA(HKEY_CLASSES_ROOT, scheme.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return true;
+    }
+    return false;
+}
+
 void launch_game(int game_id) {
     GameItem target;
     bool found = false;
@@ -281,13 +293,28 @@ void launch_game(int game_id) {
     }
     if (!found) return;
 
+    if (target.command.find("://") != std::string::npos) {
+        if (!is_uri_scheme_registered(target.command)) {
+            std::string scheme = target.command.substr(0, target.command.find("://"));
+            show_toast("Launcher '" + scheme + "' belum terpasang di PC/VM ini! Install launcher atau hubungkan Diskless.", 4500);
+            return;
+        }
+    } else if (target.command.find('\\') != std::string::npos ||
+               target.command.find('/') != std::string::npos ||
+               target.command.find(':') != std::string::npos) {
+        if (GetFileAttributesA(target.command.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            show_toast("File game tidak ditemukan di PC/VM ini (" + target.name + "). Hubungkan Drive Diskless!", 4500);
+            return;
+        }
+    }
+
     HINSTANCE res = execute_game_command(target.command, target.args);
     if ((INT_PTR)res <= 32) {
-        show_toast("Gagal meluncurkan " + target.name + ". Periksa path di Dashboard Kasir.");
+        show_toast("Gagal meluncurkan " + target.name + ". Periksa path di Dashboard Kasir.", 4000);
     } else {
         show_toast("Meluncurkan " + target.name + "... Client beralih ke Bilah Mini.");
+        apply_window_mode(MODE_UNLOCKED_MINIBAR);
     }
-    apply_window_mode(MODE_UNLOCKED_MINIBAR);
 }
 
 void open_game_folder() {
