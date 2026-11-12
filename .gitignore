@@ -1,0 +1,26 @@
+# Laravel
+kasir-laravel/vendor/
+kasir-laravel/node_modules/
+kasir-laravel/.env
+kasir-laravel/.env.backup
+kasir-laravel/.env.production
+kasir-laravel/storage/*.key
+kasir-laravel/storage/logs/*.log
+kasir-laravel/storage/framework/cache/data/*
+kasir-laravel/storage/framework/sessions/*
+kasir-laravel/storage/framework/views/*
+kasir-laravel/bootstrap/cache/*.php
+!kasir-laravel/bootstrap/cache/.gitignore
+kasir-laravel/public/storage
+kasir-laravel/database/database.sqlite
+kasir-laravel/database/database.sqlite-journal
+
+# C++ Object files
+client-cpp/*.o
+client-cpp/*.obj
+
+# Editor & OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
