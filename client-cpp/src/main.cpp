@@ -413,6 +413,8 @@ bool mount_single_share(const std::string& preferred_drive,
 
     if (rc == 53 || rc == 67) {
         out_status_msg = "Share '" + share_name + "' belum aktif di Server (jalankan BAGIKAN_DISK_GAME_SERVER.bat sbg Admin)";
+    } else if (rc == 1331) {
+        out_status_msg = "Guest Win11 nonaktif / Share belum diset (err 1331). Jalankan BAGIKAN_DISK_GAME_SERVER.bat & isi User SMB di Kasir";
     } else if (rc == 5 || rc == 86 || rc == 1272 || rc == 1326) {
         out_status_msg = "Butuh User/Pass SMB Read-Only di Dashboard Kasir (kebijakan SMB Win 11, err " + std::to_string(rc) + ")";
     } else {
@@ -1847,28 +1849,31 @@ void render_ui(HDC hdc, int width, int height) {
         // Responsive Header Bar
         bool compact_ui = (width < 1060);
         int pad_x = compact_ui ? 14 : 24;
-        int logout_w = compact_ui ? 124 : 140;
+        int logout_w = compact_ui ? 116 : 140;
         int logout_x = width - pad_x - logout_w;
-        int mini_w = compact_ui ? 148 : 178;
-        int mini_x = logout_x - 10 - mini_w;
-        int time_w = compact_ui ? 146 : 196;
-        int time_x = mini_x - 10 - time_w;
-        int bal_w = compact_ui ? 140 : 185;
-        int bal_x = time_x - 10 - bal_w;
+        int mini_w = compact_ui ? 136 : 178;
+        int mini_x = logout_x - 8 - mini_w;
+        int time_w = compact_ui ? 128 : 196;
+        int time_x = mini_x - 8 - time_w;
+        int bal_w = compact_ui ? 126 : 185;
+        int bal_x = time_x - 8 - bal_w;
 
-        int stat_w = compact_ui ? 126 : 148;
-        int mem_x = pad_x + stat_w + 12;
-        int mem_w = (std::max)(100, bal_x - mem_x - 10);
+        int stat_w = compact_ui ? 116 : 148;
+        int mem_x = pad_x + stat_w + 10;
+        int mem_w = bal_x - mem_x - 10;
 
         // Station Badge in Header
         SolidBrush stationBg(tierBgCol);
         fill_round_rect(g, &stationBg, pad_x, 18, stat_w, 48, 10);
-        draw_text(g, pc_code + " [" + tierTitle + "]", pad_x, 18, stat_w, 48, compact_ui ? 13.0f : 14.5f, tierCol, FontStyleBold, StringAlignmentCenter, StringAlignmentCenter);
+        draw_text(g, pc_code + " [" + tierTitle + "]", pad_x, 18, stat_w, 48, compact_ui ? 12.5f : 14.5f, tierCol, FontStyleBold, StringAlignmentCenter, StringAlignmentCenter);
 
-        // Member Info
-        draw_text(g, "MEMBER AKTIF", mem_x, 18, mem_w, 20, 10.0f, Color(255, 148, 163, 184), FontStyleBold);
-        draw_text(g, member_name + (member_user.empty() ? "" : " (@" + member_user + ")"),
-                  mem_x, 38, mem_w, 26, compact_ui ? 13.0f : 14.5f, Color(255, 248, 250, 252), FontStyleBold);
+        // Member Info (render only within available header space without overlapping balance card)
+        if (mem_w >= 68) {
+            draw_text(g, "MEMBER AKTIF", mem_x, 18, mem_w, 20, 9.5f, Color(255, 148, 163, 184), FontStyleBold);
+            std::string mem_disp = member_name;
+            if (mem_w >= 170 && !member_user.empty()) mem_disp += " (@" + member_user + ")";
+            draw_text(g, mem_disp, mem_x, 38, mem_w, 26, compact_ui ? 12.5f : 14.5f, Color(255, 248, 250, 252), FontStyleBold);
+        }
 
         // Balance Card in Header
         SolidBrush balBg(Color(35, 16, 185, 129));

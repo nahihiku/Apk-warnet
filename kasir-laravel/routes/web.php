@@ -225,9 +225,9 @@ set "GRANT_CLAUSE=/GRANT:Everyone,READ"
 if not "%SMB_PASS%"=="" (
     net user "%SMB_USER%" >nul 2>&1
     if errorlevel 1 (
-        net user "%SMB_USER%" "%SMB_PASS%" /add /comment:"Ukikura Game Share Read-Only" /passwordchg:no
+        net user "%SMB_USER%" "%SMB_PASS%" /add /active:yes /comment:"Ukikura Game Share Read-Only" /passwordchg:no
     ) else (
-        net user "%SMB_USER%" "%SMB_PASS%" /passwordchg:no
+        net user "%SMB_USER%" "%SMB_PASS%" /active:yes /passwordchg:no
     )
     powershell -NoProfile -Command "Try { Set-LocalUser -Name '%SMB_USER%' -PasswordNeverExpires $true } Catch {}" >nul 2>&1
     set "GRANT_CLAUSE=/GRANT:%SMB_USER%,READ /GRANT:Everyone,READ"
