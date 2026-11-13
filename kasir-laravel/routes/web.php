@@ -179,6 +179,28 @@ PS1;
     return response($script, 200, ['Content-Type' => 'text/plain; charset=utf-8']);
 })->name('download.setup');
 
+Route::post('/api/internal/sync-share-credentials', function (\Illuminate\Http\Request $request) {
+    $token = trim((string) $request->input('token', ''));
+    if ($token === '' || !\Illuminate\Support\Facades\Cache::pull("ukikura_share_sync_{$token}")) {
+        return response()->json(['success' => false, 'message' => 'Token sinkronisasi tidak valid atau kedaluwarsa.'], 403);
+    }
+
+    $shareUser = trim((string) $request->input('share_user', ''));
+    $sharePass = (string) $request->input('share_pass', '');
+    if ($shareUser === '' || $sharePass === '') {
+        return response()->json(['success' => false, 'message' => 'Username dan password SMB tidak boleh kosong.'], 422);
+    }
+
+    \App\Models\DisklessServerConfig::updateOrCreate(['key' => 'share_user'], ['value' => $shareUser]);
+    \App\Models\DisklessServerConfig::updateOrCreate(['key' => 'share_pass'], ['value' => $sharePass]);
+    \App\Models\DisklessServerConfig::updateOrCreate(
+        ['key' => 'last_update_log'],
+        ['value' => "Game Share aktif via akun Read-Only '{$shareUser}'. Client PC siap auto-mount."]
+    );
+
+    return response()->json(['success' => true]);
+})->withoutMiddleware([ValidateCsrfToken::class])->name('internal.sync_share');
+
 Route::get('/download/share-server.bat', function (\Illuminate\Http\Request $request) {
     $cfg = \App\Models\DisklessServerConfig::getGameShareConfig($request->getHost());
     $srcPrimary = $cfg['source_path'];
@@ -187,6 +209,11 @@ Route::get('/download/share-server.bat', function (\Illuminate\Http\Request $req
     $nameExtra = $cfg['extra_share_name'];
     $shareUser = $cfg['share_user'] !== '' ? $cfg['share_user'] : 'UkikuraClient';
     $sharePass = $cfg['share_pass'];
+    $suggestedPass = $sharePass !== '' ? $sharePass : ('Uki' . bin2hex(random_bytes(4)));
+
+    $syncToken = bin2hex(random_bytes(16));
+    \Illuminate\Support\Facades\Cache::put("ukikura_share_sync_{$syncToken}", true, now()->addMinutes(20));
+    $syncUrl = $request->getSchemeAndHttpHost() . '/api/internal/sync-share-credentials';
 
     $template = <<<'BAT'
 @echo off
@@ -214,11 +241,16 @@ echo.
 echo [1/4] Konfigurasi akun Read-Only Windows SMB (untuk Windows 11 Client)
 set "SMB_USER=__SHARE_USER__"
 set "SMB_PASS=__SHARE_PASS__"
-set /p "INPUT_USER=Nama akun SMB Read-Only [Default: %SMB_USER%]: "
+set /p "INPUT_USER=Nama akun SMB Read-Only [Tekan ENTER untuk pakai: %SMB_USER%]: "
 if not "%INPUT_USER%"=="" set "SMB_USER=%INPUT_USER%"
 if "%SMB_PASS%"=="" (
     echo   (Penting: Windows 11 Client memblokir guest tanpa password secara default.)
-    set /p "SMB_PASS=Masukkan password untuk akun %SMB_USER% (contoh: ukikura123): "
+    set /p "INPUT_PASS=Password akun %SMB_USER% [Tekan ENTER untuk pakai: __SUGGESTED_PASS__]: "
+    if "%INPUT_PASS%"=="" (
+        set "SMB_PASS=__SUGGESTED_PASS__"
+    ) else (
+        set "SMB_PASS=%INPUT_PASS%"
+    )
 )
 
 set "GRANT_CLAUSE=/GRANT:Everyone,READ"
@@ -256,20 +288,28 @@ if exist "__SRC_EXTRA__" (
 )
 
 echo.
-echo [4/4] Membuka Firewall File ^& Printer Sharing (SMB Port 445)
+echo [4/4] Membuka Firewall File ^& Printer Sharing ^& Sinkron ke Kasir Server
 netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=Yes >nul 2>&1
 netsh advfirewall firewall add rule name="Ukikura Server Game Share SMB 445" dir=in action=allow protocol=TCP localport=445 >nul 2>&1
 
+set "SYNC_URL=__SYNC_URL__"
+set "SYNC_TOKEN=__SYNC_TOKEN__"
+set "SYNC_OK=0"
+if not "%SMB_PASS%"=="" (
+    powershell -NoProfile -Command "Try { $res = Invoke-RestMethod -Uri $env:SYNC_URL -Method Post -Body @{ token=$env:SYNC_TOKEN; share_user=$env:SMB_USER; share_pass=$env:SMB_PASS } -TimeoutSec 5; if($res.success){ exit 0 } } Catch {}; exit 1" >nul 2>&1
+    if not errorlevel 1 set "SYNC_OK=1"
+)
+
 echo.
 echo ============================================================================
-echo   SELESAI! LANGKAH TERAKHIR DI DASHBOARD KASIR (Tab Diskless ^& Vault):
-if not "%SMB_PASS%"=="" (
-    echo   Masukkan SMB User: %SMB_USER%   ^|   SMB Pass: %SMB_PASS%
-    echo   lalu klik "Simpan Pengaturan Game Disk Server".
+if "%SYNC_OK%"=="1" (
+    echo   [OK] Kredensial SMB ^(%SMB_USER%^) OTOMATIS tersimpan ke Dashboard Kasir!
+    echo   Di aplikasi Client VM, cukup klik tombol "Hubungkan Drive Server"!
 ) else (
-    echo   Share dibuka dalam mode Everyone Read-Only.
+    echo   SELESAI! LANGKAH TERAKHIR DI DASHBOARD KASIR ^(Tab Diskless ^& Vault^):
+    echo   Masukkan SMB User: %SMB_USER%   ^|   SMB Pass: %SMB_PASS%
+    echo   lalu klik "Simpan Game Disk Server", kemudian klik "Hubungkan Drive Server" di VM.
 )
-echo   Setelah itu tekan F2/Sinkron di WarnetClient.exe Client/VM!
 echo ============================================================================
 echo.
 pause
@@ -282,6 +322,9 @@ BAT;
         '__NAME_EXTRA__' => $nameExtra,
         '__SHARE_USER__' => $shareUser,
         '__SHARE_PASS__' => $sharePass,
+        '__SUGGESTED_PASS__' => $suggestedPass,
+        '__SYNC_URL__' => $syncUrl,
+        '__SYNC_TOKEN__' => $syncToken,
     ]);
     $content = str_replace("\r\n", "\n", $content);
     $content = str_replace("\n", "\r\n", $content);

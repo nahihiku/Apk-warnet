@@ -395,6 +395,11 @@ bool mount_single_share(const std::string& preferred_drive,
         WNetCancelConnection2A(drv.c_str(), 0, TRUE);
         rc = try_connect(drv, target_unc, !using_vbox);
     } else if (rc == ERROR_SESSION_CREDENTIAL_CONFLICT) {
+        size_t ipc_slash = target_unc.find('\\', 2);
+        if (ipc_slash != std::string::npos) {
+            std::string ipc_path = target_unc.substr(0, ipc_slash) + "\\IPC$";
+            WNetCancelConnection2A(ipc_path.c_str(), 0, TRUE);
+        }
         WNetCancelConnection2A(target_unc.c_str(), 0, TRUE);
         rc = try_connect(drv, target_unc, !using_vbox);
     }
@@ -2616,8 +2621,11 @@ void handle_click(int x, int y) {
             else if (act == "game_page_next") { g_game_page++; }
             else if (act == "open_game_folder") { open_game_folder(); }
             else if (act == "connect_game_drive") {
-                show_toast("Menghubungkan Drive Game Server...");
-                std::thread([]() { ensure_server_game_drives_mounted(true); }).detach();
+                show_toast("Menyinkronkan & menghubungkan Drive Game Server...");
+                std::thread([]() {
+                    sync_catalog_from_server();
+                    ensure_server_game_drives_mounted(true);
+                }).detach();
             }
             else if (act == "cfg_exit_app") {
                 if (g_cfg_operator_pin != g_operator_pin) {
