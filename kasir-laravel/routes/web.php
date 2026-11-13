@@ -71,7 +71,12 @@ Route::prefix('api/client')
 Route::get('/download/client', function () {
     $path = realpath(base_path('../client-cpp/WarnetClient.exe'));
     abort_unless($path && file_exists($path), 404, 'WarnetClient.exe belum dikompilasi di server.');
-    return response()->download($path, 'WarnetClient.exe');
+    $size = filesize($path);
+    return response()->download($path, 'WarnetClient.exe', [
+        'Content-Type' => 'application/octet-stream',
+        'Content-Length' => (string) $size,
+        'Cache-Control' => 'no-store, no-cache, must-revalidate',
+    ]);
 })->name('download.client');
 
 Route::get('/download/installer', function () {
@@ -91,21 +96,59 @@ Route::get('/download/setup.ps1', function (\Illuminate\Http\Request $request) {
     $serverHost = $request->getHost();
     $serverPort = (int) ($request->getPort() ?: 8088);
     $pcCode = preg_replace('/[^A-Za-z0-9_-]/', '', (string) $request->query('pc', 'PC-01')) ?: 'PC-01';
+    $exePath = realpath(base_path('../client-cpp/WarnetClient.exe'));
+    $expectedBytes = ($exePath && file_exists($exePath)) ? (int) filesize($exePath) : 0;
+    $expectedSha = ($exePath && file_exists($exePath)) ? strtoupper(hash_file('sha256', $exePath)) : '';
 
     $template = <<<'PS1'
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $baseUrl = '__BASE_URL__'
 $serverHost = '__SERVER_HOST__'
 $serverPort = '__SERVER_PORT__'
 $pcCode = '__PC_CODE__'
+$expectedBytes = __EXPECTED_BYTES__
+$expectedSha = '__EXPECTED_SHA__'
 $installDir = 'C:\UkikuraClient'
 
 Write-Host '=== UKIKURA iCAFE VM / CLIENT SETUP ===' -ForegroundColor Cyan
 Stop-Process -Name WarnetClient -Force -ErrorAction SilentlyContinue
+& cmd.exe /c 'taskkill /F /IM WarnetClient.exe >nul 2>&1 || exit /b 0'
+Start-Sleep -Milliseconds 600
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 
-Write-Host "[1/4] Mengunduh WarnetClient.exe dari $baseUrl ..."
-Invoke-WebRequest -Uri "$baseUrl/download/client" -OutFile "$installDir\WarnetClient.exe" -UseBasicParsing
+$exeDest = "$installDir\WarnetClient.exe"
+$exeTmp = "$installDir\WarnetClient.exe.tmp"
+Remove-Item $exeTmp -Force -ErrorAction SilentlyContinue
+
+Write-Host "[1/4] Mengunduh WarnetClient.exe ($expectedBytes bytes) dari $baseUrl ..."
+if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+    & curl.exe -fsSL --retry 3 --connect-timeout 10 "$baseUrl/download/client" -o "$exeTmp"
+} else {
+    $wc = New-Object System.Net.WebClient
+    $wc.DownloadFile("$baseUrl/download/client", "$exeTmp")
+}
+
+if (-not (Test-Path $exeTmp)) {
+    throw "Gagal mengunduh WarnetClient.exe (file sementara tidak terbentuk)."
+}
+$dlSize = (Get-Item $exeTmp).Length
+if ($expectedBytes -gt 0 -and $dlSize -ne $expectedBytes) {
+    throw "Ukuran WarnetClient.exe tidak sesuai ($dlSize bytes, seharusnya $expectedBytes bytes). Coba jalankan ulang!"
+}
+$head = [System.IO.File]::ReadAllBytes($exeTmp)[0..1]
+if ($head[0] -ne 0x4D -or $head[1] -ne 0x5A) {
+    throw "File yang terunduh bukan executable Windows (PE MZ) yang valid!"
+}
+if ($expectedSha -ne '') {
+    $actualSha = (Get-FileHash -Path $exeTmp -Algorithm SHA256).Hash.ToUpper()
+    if ($actualSha -ne $expectedSha) {
+        throw "Checksum SHA256 WarnetClient.exe tidak cocok! Download terpotong."
+    }
+}
+Move-Item -Path $exeTmp -Destination $exeDest -Force
+Unblock-File -Path $exeDest -ErrorAction SilentlyContinue
+Write-Host "      Terverifikasi OK: $dlSize bytes (SHA256 cocok)" -ForegroundColor Green
 
 Write-Host '[2/4] Mengunduh install_client.bat & uninstall_client.bat ...'
 Invoke-WebRequest -Uri "$baseUrl/download/installer" -OutFile "$installDir\install_client.bat" -UseBasicParsing
@@ -129,6 +172,8 @@ PS1;
         '__SERVER_HOST__' => $serverHost,
         '__SERVER_PORT__' => (string) $serverPort,
         '__PC_CODE__' => $pcCode,
+        '__EXPECTED_BYTES__' => (string) $expectedBytes,
+        '__EXPECTED_SHA__' => $expectedSha,
     ]);
 
     return response($script, 200, ['Content-Type' => 'text/plain; charset=utf-8']);
